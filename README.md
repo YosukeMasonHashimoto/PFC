@@ -79,8 +79,8 @@ Service Workerはアイコンと汎用オフライン案内のみをキャッシ
 ## Vercel公開チェックリスト
 
 - [ ] このリポジトリをVercelに接続し、Framework PresetをNext.jsに設定
-- [ ] 上記3環境変数を設定（Preview環境は必要に応じて別Supabaseプロジェクト）
-- [ ] 独自ドメインまたは固定Vercel URLを `APP_URL` に指定
+- [ ] Vercelには `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を設定（Preview環境は必要に応じて別Supabaseプロジェクト）
+- [ ] Vercel標準ドメインでは `APP_URL` は未設定にする（`VERCEL_PROJECT_PRODUCTION_URL` から自動認識）。独自ドメインを使う場合のみ `APP_URL` にそのHTTPSオリジンを指定。Codex用のlocalhost値をVercelへコピーしない
 - [ ] Supabaseマイグレーション、Emailテンプレート、Site URL、Redirect URLsを設定
 - [ ] HTTPS環境でメール認証・ログアウト、iPhone/Mac間のデータ共有を実確認
 - [ ] 別の2ユーザーで相互に記録が見えないことを実確認
@@ -151,3 +151,5 @@ Supabaseの接続先が決まったら、環境設定に公開用の上記3変�
 ## 実Supabase接続後の確認
 
 初期マイグレーション適用済み。実プロジェクトのAuth health 200、8テーブルすべてのRLS有効化、匿名tracker_data RPCの401/42501による拒否を確認しました。Site URLと許可コールバックを設定済みです。同じDBに初期SQLを重複適用しないでください。無料プラン標準メールの本文変更はAPIから拒否されたため、標準テンプレートのPKCEに対応しました。Lint・型検査・27テスト・2ブラウザシナリオ・本番ビルドが成功しています。メールの実到達と実ユーザーによるログイン完了は未検証です。現在のAPP_URLはローカル開発用で、Vercel等への一般公開はまだ行っていません。
+
+VercelにインポートするGitHubリポジトリ: https://github.com/YosukeMasonHashimoto/PFC （main）。Root Directoryはリポジトリ直下、Framework PresetはNext.js、自動設定のビルドコマンドを使用します。`SUPABASE_ACCESS_TOKEN` は管理作業専用なのでVercelには登録しません。
