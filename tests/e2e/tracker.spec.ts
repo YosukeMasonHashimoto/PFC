@@ -158,7 +158,17 @@ test("login-free mobile UI: local persistence, food, pack, snapshots, history an
   });
   expect(
     cached.every(
-      (path) => path.startsWith("/icons/") || path === "/offline.html",
+      (path) =>
+        path.startsWith("/icons/") ||
+        path.startsWith("/_next/static/") ||
+        [
+          "/",
+          "/foods",
+          "/history",
+          "/settings",
+          "/manifest.webmanifest",
+          "/offline.html",
+        ].includes(path),
     ),
   ).toBe(true);
   const manifest = await request.get("/manifest.webmanifest");

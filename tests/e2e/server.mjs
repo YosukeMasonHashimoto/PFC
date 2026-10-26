@@ -4,7 +4,7 @@ const child = spawn(
   process.execPath,
   [
     "node_modules/next/dist/bin/next",
-    "dev",
+    "start",
     "--hostname",
     "127.0.0.1",
     "--port",

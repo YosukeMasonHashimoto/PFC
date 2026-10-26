@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
-import Link from "next/link";
+import { AppLink as Link, PwaStatus, PwaPanel } from "@/components/pwa";
 import { usePathname } from "next/navigation";
 import {
   Activity,
@@ -100,14 +100,6 @@ export default function Tracker() {
     const timer = setTimeout(() => {
       load().catch((e) => setError(e.message));
     }, 0);
-    if ("serviceWorker" in navigator)
-      navigator.serviceWorker
-        .register("/sw.js")
-        .catch(() =>
-          setNotice(
-            "PWAの初期化に失敗しました。ブラウザでの記録は利用できます。",
-          ),
-        );
     return () => clearTimeout(timer);
   }, [load]);
   useEffect(() => {
@@ -276,6 +268,7 @@ export default function Tracker() {
               </Button>
             )}
           </div>
+          <PwaStatus />
           {error && (
             <div className="message error" role="alert">
               {error}{" "}
@@ -795,11 +788,8 @@ export default function Tracker() {
                     <p className="muted">
                       日時は日本時間で入力・集計します。ログインは不要です。データはこの端末の、このブラウザに保存されます。iPhoneとMacの自動同期はありません。ブラウザデータを削除すると記録も消えます。
                     </p>
-                    <h3>iPhoneのホーム画面に追加</h3>
-                    <p className="muted">
-                      Safariの共有ボタンから「ホーム画面に追加」を選択してください。ホーム画面版とSafariで保存領域が分かれる場合があります。移動時はバックアップを使ってください。アプリの初回表示・再読み込みには接続が必要です。
-                    </p>
-                    <BackupControls onRestore={load} />
+                    <PwaPanel />
+                    <BackupControls onRestore={load} data={data} />
                   </section>
                 </div>
               )}

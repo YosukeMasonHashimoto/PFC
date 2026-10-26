@@ -1,9 +1,11 @@
 import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    id: "/",
+    scope: "/",
     name: "PFC Tracker",
-    short_name: "PFC",
-    description: "毎日の栄養記録",
+    short_name: "PFC Tracker",
+    description: "ログイン不要。毎日の栄養を記録する端末保存型アプリ",
     start_url: "/",
     display: "standalone",
     background_color: "#f6f8f7",

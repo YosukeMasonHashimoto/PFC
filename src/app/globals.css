@@ -849,7 +849,8 @@ details p {
     gap: 5px;
   }
 }
-@media (max-width: 800px) {
+@media (max-width: 800px),
+  (hover: none) and (pointer: coarse) and (max-width: 1024px) {
   .sidebar {
     display: none;
   }
@@ -1024,5 +1025,84 @@ details p {
   }
   .meter {
     height: 8px;
+  }
+}
+
+/* iPhone installed-app layout: preserve zoom, avoid input autofocus zoom and safe-area overlap. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+.app-shell {
+  min-height: 100dvh;
+}
+.editor-dialog {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: 24px;
+}
+.pwa-panel {
+  margin: 24px 0;
+  padding: 20px 0;
+  border-block: 1px solid var(--border);
+}
+.pwa-panel ol {
+  padding-left: 22px;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.pwa-readiness,
+.installed-label {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+}
+.offline-status {
+  background: #fff4de;
+  color: #7c5a20;
+}
+.pwa-update {
+  background: #eaf6ef;
+  color: #26745a;
+}
+.pwa-update a {
+  text-decoration: underline;
+}
+.backup-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+@media (max-width: 800px),
+  (hover: none) and (pointer: coarse) and (max-width: 1024px) {
+  .workspace {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .topbar {
+    height: calc(65px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+  .page-content {
+    padding-bottom: calc(100px + env(safe-area-inset-bottom));
+  }
+  .bottom-nav {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    min-width: 0;
+  }
+  input[type="date"],
+  input[type="datetime-local"] {
+    max-width: 100%;
+  }
+  .editor-dialog {
+    max-height: calc(
+      100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px
+    );
   }
 }
