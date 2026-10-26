@@ -1,0 +1,3 @@
+-- Intentionally no nutritional values: no verified/licensed source is bundled.
+-- Register foods using package labels and retain source reference/version.
+-- Shared foods (owner_id IS NULL) require the trusted SQL editor/admin path.
