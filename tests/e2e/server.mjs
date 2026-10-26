@@ -50,6 +50,35 @@ const server = http.createServer(async (req, res) => {
   let text = "";
   for await (const part of req) text += part;
   const body = text ? JSON.parse(text) : {};
+  if (
+    url.pathname === "/auth/v1/token" &&
+    url.searchParams.get("grant_type") === "pkce"
+  ) {
+    if (
+      body.auth_code !== "test-pkce-code" ||
+      typeof body.code_verifier !== "string" ||
+      body.code_verifier.length < 32
+    ) {
+      res.statusCode = 400;
+      res.end(
+        JSON.stringify({
+          error: "invalid_grant",
+          error_description: "invalid test verifier",
+        }),
+      );
+      return;
+    }
+    res.end(
+      JSON.stringify({
+        access_token: jwt(),
+        refresh_token: "test-refresh",
+        token_type: "bearer",
+        expires_in: 3600,
+        user,
+      }),
+    );
+    return;
+  }
   if (url.pathname === "/auth/v1/verify") {
     res.end(
       JSON.stringify({

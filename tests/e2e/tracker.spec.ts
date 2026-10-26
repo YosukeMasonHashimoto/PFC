@@ -209,3 +209,19 @@ test("mobile UI: auth protection, food, pack, snapshot, targets, history and tem
   await expect(page).toHaveURL(/\/login/);
   expect(pageErrors).toEqual([]);
 });
+
+// Simulates the HTTP contract only; no real email is sent.
+test("standard email PKCE callback persists session and rejects invalid code", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("メールアドレス").fill("test@example.invalid");
+  await page.getByRole("button", { name: "ログインリンクを送る" }).click();
+  await expect(page).toHaveURL(/sent=1/);
+  await page.goto("/auth/confirm?code=test-pkce-code");
+  await expect(page.getByRole("heading", { name: "今日の栄養" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "今日の栄養" })).toBeVisible();
+  await page.goto("/auth/confirm?code=invalid");
+  await expect(page).toHaveURL(/error=expired/);
+});

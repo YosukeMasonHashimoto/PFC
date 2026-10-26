@@ -26,7 +26,7 @@ npm run dev
 3. CLIで管理する場合は別途公式Supabase CLIを用意し、リポジトリで `supabase init`、`supabase link --project-ref YOUR_PROJECT_REF`、`supabase db push` を実行してください。SQL Editor適用とCLI適用を重複させないでください。既存のテーブル名が衝突するプロジェクトでは事前に内容を確認してください。
 4. Authentication → ProvidersでEmailを有効にします。
 5. Authentication → URL ConfigurationでSite URLを `APP_URL` と一致させ、Redirect URLsにローカルと本番の `/auth/confirm` URLを登録します。不要なワイルドカードは使いません。
-6. Authentication → Email Templates → Magic Linkのリンクを次の形式に変更します。トークンをブラウザ側で処理せずサーバーで検証します。
+6. 標準メールテンプレート（`{{ .ConfirmationURL }}`）をそのまま使用できます。アプリはPKCEの `code` をサーバーでセッションへ交換します。ログインを開始した同じブラウザでメールリンクを開いてください。無料プランの標準メール送信ではテンプレート変更が制限されます。カスタムSMTP等で変更可能な場合のみ、以下のtoken_hash形式も使用できます。
 
 ```html
 <a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email">PFC Trackerにログイン</a>
@@ -35,7 +35,7 @@ npm run dev
 7. 本番利用では独自SMTP・送信元ドメインを設定し、メール到達性とSupabaseの送信制限・認証レート制限を確認します。初期1名運用では登録後に新規ユーザー登録を無効化する運用も推奨します。
 8. メールアドレスを入力し、届いたリンクを同じブラウザで開きます。初回はプロフィールと107g / 70g / 335g / 2,400kcalの初期目標が自動生成されます。
 
-本番DBへのマイグレーション適用、実メール到達、実Supabaseの認証フローはこのクラウド環境では未検証です。接続情報は注入されていませんでした。アプリ用にservice_roleキーは必要ありません。
+Supabaseの実プロジェクトに初期マイグレーションを適用済みです。接続・8テーブルのRLS・認証設定を管理APIから検証しています。実メール到達と実ユーザーの認証完了は未検証です。アプリ用にservice_roleキーは必要ありません。
 
 ## 使い方
 
@@ -145,3 +145,9 @@ Supabaseの接続先が決まったら、環境設定に公開用の上記3変�
 - `npm run build`: 成功
 
 実Supabase・実メール・実機PWA・Vercel公開については上記チェックリストに沿った設定と確認が必要です。
+
+認証コールバックは標準メールのPKCE codeとカスタムメールのtoken_hashの両方に対応します。ブラウザE2EにはPKCEのcookie保持・コード交換・不正コード拒否を含みます。
+
+## 実Supabase接続後の確認
+
+初期マイグレーション適用済み。実プロジェクトのAuth health 200、8テーブルすべてのRLS有効化、匿名tracker_data RPCの401/42501による拒否を確認しました。Site URLと許可コールバックを設定済みです。同じDBに初期SQLを重複適用しないでください。無料プラン標準メールの本文変更はAPIから拒否されたため、標準テンプレートのPKCEに対応しました。Lint・型検査・27テスト・2ブラウザシナリオ・本番ビルドが成功しています。メールの実到達と実ユーザーによるログイン完了は未検証です。現在のAPP_URLはローカル開発用で、Vercel等への一般公開はまだ行っていません。
