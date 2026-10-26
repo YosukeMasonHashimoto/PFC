@@ -34,8 +34,8 @@ import {
   type Nutrients,
 } from "@/lib/nutrition";
 import type { Food, Meal, TrackerData, Template } from "@/lib/types";
-import { SubmitButton } from "@/components/submit-button";
-import { logout } from "@/app/login/actions";
+import { BackupControls } from "@/components/backup-controls";
+import { loadLocal, mutateLocal } from "@/lib/local-store";
 const labels = {
   protein: "たんぱく質",
   fat: "脂質",
@@ -93,10 +93,8 @@ export default function Tracker() {
     [editor, setEditor] = useState<Editor | null>(null);
   const busy = useRef(false);
   const load = useCallback(async () => {
-    const res = await fetch("/api/data", { cache: "no-store" });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error);
-    setData(body);
+    setData(await loadLocal());
+    setError("");
   }, []);
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -118,7 +116,16 @@ export default function Tracker() {
         load().catch((e) => setError(e.message));
     };
     document.addEventListener("visibilitychange", refresh);
-    return () => document.removeEventListener("visibilitychange", refresh);
+    const channel =
+      typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel("pfc-local-updates")
+        : null;
+    if (channel)
+      channel.onmessage = () => load().catch((e) => setError(e.message));
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      channel?.close();
+    };
   }, [load]);
   async function mutate(action: string, payload: unknown) {
     if (busy.current) return;
@@ -127,21 +134,14 @@ export default function Tracker() {
     setError("");
     setNotice("");
     try {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, data: payload }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error);
+      const saved = await mutateLocal(action, payload);
+      setData(saved);
       setEditor(null);
-      try {
-        await load();
-        setNotice("保存しました");
-      } catch {
-        setError(
-          "保存は完了しましたが再取得できませんでした。再読み込みしてください。",
-        );
+      setNotice("このブラウザに保存しました");
+      if (typeof BroadcastChannel !== "undefined") {
+        const channel = new BroadcastChannel("pfc-local-updates");
+        channel.postMessage("saved");
+        channel.close();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存できませんでした");
@@ -217,7 +217,7 @@ export default function Tracker() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <span className="online-dot" /> オンライン記録
+          <span className="online-dot" /> このブラウザに保存
           <small>Asia/Tokyo · 日本時間</small>
         </div>
       </aside>
@@ -296,10 +296,15 @@ export default function Tracker() {
               {notice}
             </div>
           )}
+          {!data && error && (
+            <div className="card">
+              <BackupControls onRestore={load} />
+            </div>
+          )}
           {!data ? (
             <div className="card empty" role="status">
               {error
-                ? "接続を確認して再読み込みしてください。"
+                ? "ブラウザの保存設定を確認して再読み込みしてください。"
                 : "記録を読み込んでいます…"}
             </div>
           ) : (
@@ -785,18 +790,16 @@ export default function Tracker() {
                     ))}
                   </section>
                   <section className="card">
-                    <h2>アカウントとアプリ</h2>
+                    <h2>保存とバックアップ</h2>
                     <p>記録のタイムゾーン：Asia/Tokyo</p>
                     <p className="muted">
-                      日時は日本時間で入力・集計します。iPhoneとMacは同じメールアドレスでログインしてください。別端末での変更は画面に戻ったときに再取得します。
+                      日時は日本時間で入力・集計します。ログインは不要です。データはこの端末の、このブラウザに保存されます。iPhoneとMacの自動同期はありません。ブラウザデータを削除すると記録も消えます。
                     </p>
                     <h3>iPhoneのホーム画面に追加</h3>
                     <p className="muted">
-                      Safariの共有ボタンから「ホーム画面に追加」を選択してください。記録にはインターネット接続が必要です。
+                      Safariの共有ボタンから「ホーム画面に追加」を選択してください。ホーム画面版とSafariで保存領域が分かれる場合があります。移動時はバックアップを使ってください。アプリの初回表示・再読み込みには接続が必要です。
                     </p>
-                    <form action={logout}>
-                      <SubmitButton>ログアウト</SubmitButton>
-                    </form>
+                    <BackupControls onRestore={load} />
                   </section>
                 </div>
               )}

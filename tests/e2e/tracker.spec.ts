@@ -1,23 +1,18 @@
 import { test, expect } from "@playwright/test";
-test("mobile UI: auth protection, food, pack, snapshot, targets, history and templates", async ({
+test("login-free mobile UI: local persistence, food, pack, snapshots, history and templates", async ({
   page,
   request,
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.goto("/");
-  await expect(page).toHaveURL(/\/login/);
-  expect((await request.get("/api/data")).status()).toBe(401);
-  const csrf = await request.post("/api/data", {
-    headers: { Origin: "https://attacker.invalid" },
-    data: {
-      action: "delete_meal",
-      data: { id: "11111111-1111-4111-8111-111111111111" },
-    },
+  const externalRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("supabase"))
+      externalRequests.push(request.url());
   });
-  expect(csrf.status()).toBe(403);
-  // Test-only auth adapter: hosted email delivery and token validation are not simulated successes.
-  await page.goto("/auth/confirm?token_hash=test-only&type=email");
+  await page.goto("/login");
+  await expect(page).toHaveURL(/\/$/);
+  expect((await request.get("/api/data")).status()).toBe(410);
   await expect(page.getByRole("heading", { name: "今日の栄養" })).toBeVisible();
   await page
     .locator(".bottom-nav")
@@ -45,7 +40,9 @@ test("mobile UI: auth protection, food, pack, snapshot, targets, history and tem
   await page
     .getByRole("button", { name: "ご飯（炊飯後・架空テスト）のお気に入り切替" })
     .click();
-  await expect(page.getByRole("status")).toContainText("保存しました");
+  await expect(page.getByRole("status")).toContainText(
+    "このブラウザに保存しました",
+  );
   await page.getByRole("button", { name: "記録", exact: true }).click();
   await dialog
     .getByLabel("単位", { exact: true })
@@ -201,44 +198,147 @@ test("mobile UI: auth protection, food, pack, snapshot, targets, history and tem
     .first()
     .click();
   await expect(page.locator(".meal-row")).toHaveCount(1);
-  await page
-    .locator(".bottom-nav")
-    .getByRole("link", { name: "設定", exact: true })
-    .click();
-  await page.getByRole("button", { name: "ログアウト" }).click();
-  await expect(page).toHaveURL(/\/login/);
+  await page.reload();
+  await page.getByLabel("表示日").fill("2026-10-25");
+  await expect(page.locator(".meal-row")).toHaveCount(1);
+  expect(externalRequests).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
 
-// Simulates the HTTP contract only; no real email is sent.
-test("standard email PKCE callback persists session and rejects invalid code", async ({
+async function addFood(page: import("@playwright/test").Page, name: string) {
+  await page
+    .getByRole("button", { name: "食品を登録", exact: true })
+    .first()
+    .click();
+  const d = page.getByRole("dialog");
+  await d.getByLabel("食品名", { exact: true }).fill(name);
+  for (const [label, value] of [
+    ["たんぱく質 (g)", "10"],
+    ["脂質 (g)", "5"],
+    ["炭水化物 (g)", "20"],
+    ["カロリー (kcal)", "170"],
+  ])
+    await d.getByLabel(label, { exact: true }).fill(value);
+  await d.getByRole("button", { name: "保存する" }).click();
+  await expect(d).not.toBeVisible();
+}
+test("backup download, isolated browser and restore with invalid-file protection", async ({
   page,
+  browser,
 }) => {
-  await page.goto("/login");
-  await page.getByLabel("メールアドレス").fill("test@example.invalid");
-  await page.getByRole("button", { name: "ログインリンクを送る" }).click();
-  await expect(page).toHaveURL(/sent=1/);
-  await page.goto("/auth/confirm?code=test-pkce-code");
-  await expect(page.getByRole("heading", { name: "今日の栄養" })).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "今日の栄養" })).toBeVisible();
-  await page.goto("/auth/confirm?code=invalid");
-  await expect(page).toHaveURL(/error=expired/);
+  await page.goto("/foods");
+  await addFood(page, "バックアップ用架空食品");
+  await page.getByRole("button", { name: "記録", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("記録日時（日本時間）")
+    .fill("2026-10-26T00:00");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存する" })
+    .click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.goto("/settings");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "バックアップを書き出す" }).click();
+  const download = await downloadPromise;
+  const file = await download.path();
+  expect(file).toBeTruthy();
+  const other = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const fresh = await other.newPage();
+  await fresh.goto("http://127.0.0.1:3100/foods");
+  await expect(
+    fresh.getByRole("heading", { name: "食品が見つかりません" }),
+  ).toBeVisible();
+  await fresh.goto("http://127.0.0.1:3100/settings");
+  await fresh
+    .getByLabel("バックアップを読み込む", { exact: false })
+    .setInputFiles({
+      name: "bad.json",
+      mimeType: "application/json",
+      buffer: Buffer.from("{}"),
+    });
+  await expect(fresh.locator("section").getByRole("alert")).toContainText(
+    "バックアップではありません",
+  );
+  fresh.once("dialog", (d) => d.dismiss());
+  await fresh
+    .getByLabel("バックアップを読み込む", { exact: false })
+    .setInputFiles(file!);
+  await fresh.goto("http://127.0.0.1:3100/foods");
+  await expect(
+    fresh.getByRole("heading", { name: "食品が見つかりません" }),
+  ).toBeVisible();
+  await fresh.goto("http://127.0.0.1:3100/settings");
+  fresh.once("dialog", (d) => d.accept());
+  await fresh
+    .getByLabel("バックアップを読み込む", { exact: false })
+    .setInputFiles(file!);
+  await expect(fresh.getByRole("status")).toContainText(
+    "バックアップを復元しました",
+  );
+  await fresh.goto("http://127.0.0.1:3100/history");
+  await fresh.getByLabel("表示日").fill("2026-10-26");
+  await expect(fresh.locator(".meal-row")).toContainText(
+    "バックアップ用架空食品",
+  );
+  await expect(fresh.locator(".meal-row")).toContainText("P 10");
+  await fresh.reload();
+  await fresh.getByLabel("表示日").fill("2026-10-26");
+  await expect(fresh.locator(".meal-row")).toHaveCount(1);
+  await other.close();
 });
-
-test("email failures show actionable reasons without reporting success", async ({
+test("multiple tabs preserve concurrent changes and loaded pages save without a network", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/foods");
+  const second = await context.newPage();
+  await second.goto("http://127.0.0.1:3100/foods");
+  await Promise.all([
+    addFood(page, "タブA架空食品"),
+    addFood(second, "タブB架空食品"),
+  ]);
+  await page.reload();
+  await expect(page.locator(".food-card")).toHaveCount(2);
+  await context.setOffline(true);
+  await addFood(page, "オフライン架空食品");
+  await expect(page.locator(".food-card")).toHaveCount(3);
+  await context.setOffline(false);
+  await page.reload();
+  await expect(page.locator(".food-card")).toHaveCount(3);
+});
+test("failed persistent writes never report success or replace previous data", async ({
   page,
 }) => {
-  for (const [email, message] of [
-    ["limited@example.invalid", "メール送信の回数制限"],
-    ["restricted@example.invalid", "この宛先に送信できません"],
-  ]) {
-    await page.goto("/login");
-    await page.getByLabel("メールアドレス").fill(email);
-    await page.getByRole("button", { name: "ログインリンクを送る" }).click();
-    await expect(page.locator("main").getByRole("alert")).toContainText(
-      message,
-    );
-    await expect(page.getByRole("status")).toHaveCount(0);
-  }
+  await page.goto("/foods");
+  await addFood(page, "保持する架空食品");
+  await page.evaluate(() => {
+    IDBObjectStore.prototype.put = function () {
+      throw new DOMException("空き容量が不足しています", "QuotaExceededError");
+    };
+  });
+  await page
+    .getByRole("button", { name: "食品を登録", exact: true })
+    .first()
+    .click();
+  const d = page.getByRole("dialog");
+  await d.getByLabel("食品名", { exact: true }).fill("保存できない食品");
+  for (const label of [
+    "たんぱく質 (g)",
+    "脂質 (g)",
+    "炭水化物 (g)",
+    "カロリー (kcal)",
+  ])
+    await d.getByLabel(label, { exact: true }).fill("1");
+  await d.getByRole("button", { name: "保存する" }).click();
+  await expect(d.getByRole("alert")).toContainText("空き容量");
+  await expect(d).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".food-card")).toHaveCount(1);
+  await expect(
+    page.getByRole("heading", { name: "保持する架空食品" }),
+  ).toBeVisible();
 });
