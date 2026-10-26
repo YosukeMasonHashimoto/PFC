@@ -1,3 +1,4 @@
+import { loginErrors } from "@/lib/auth-errors";
 import { SubmitButton } from "@/components/submit-button";
 import { login } from "./actions";
 import { configured } from "@/lib/supabase/server";
@@ -20,11 +21,7 @@ export default async function Login({
         </p>
       )}
       {q.error && (
-        <p role="alert">
-          {q.error === "expired"
-            ? "リンクが無効または期限切れです。再送してください。"
-            : "送信できませんでした。設定・メールアドレスを確認し、しばらく待って再試行してください。"}
-        </p>
+        <p role="alert">{loginErrors[q.error] || loginErrors.send}</p>
       )}
       {q.sent && (
         <p role="status">

@@ -225,3 +225,20 @@ test("standard email PKCE callback persists session and rejects invalid code", a
   await page.goto("/auth/confirm?code=invalid");
   await expect(page).toHaveURL(/error=expired/);
 });
+
+test("email failures show actionable reasons without reporting success", async ({
+  page,
+}) => {
+  for (const [email, message] of [
+    ["limited@example.invalid", "メール送信の回数制限"],
+    ["restricted@example.invalid", "この宛先に送信できません"],
+  ]) {
+    await page.goto("/login");
+    await page.getByLabel("メールアドレス").fill(email);
+    await page.getByRole("button", { name: "ログインリンクを送る" }).click();
+    await expect(page.locator("main").getByRole("alert")).toContainText(
+      message,
+    );
+    await expect(page.getByRole("status")).toHaveCount(0);
+  }
+});

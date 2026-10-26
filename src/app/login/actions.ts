@@ -1,4 +1,5 @@
 "use server";
+import { sendErrorReason } from "@/lib/auth-errors";
 import { redirect } from "next/navigation";
 import { appOrigin } from "@/lib/config";
 import { z } from "zod";
@@ -12,7 +13,15 @@ export async function login(form: FormData) {
     email: email.data,
     options: { emailRedirectTo: `${appOrigin()}/auth/confirm` },
   });
-  redirect(error ? "/login?error=send" : "/login?sent=1");
+  if (error) {
+    console.error("Supabase OTP send failed", {
+      code: error.code || "unknown",
+      status: error.status,
+      name: error.name,
+    });
+    redirect(`/login?error=${sendErrorReason(error)}`);
+  }
+  redirect("/login?sent=1");
 }
 export async function logout() {
   const db = await supabase();

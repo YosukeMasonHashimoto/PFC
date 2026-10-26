@@ -105,6 +105,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/auth/v1/otp") {
+    if (body.email === "limited@example.invalid") {
+      res.statusCode = 429;
+      res.end(
+        JSON.stringify({
+          code: "over_email_send_rate_limit",
+          error_code: "over_email_send_rate_limit",
+          msg: "test rate limit",
+        }),
+      );
+      return;
+    }
+    if (body.email === "restricted@example.invalid") {
+      res.statusCode = 403;
+      res.end(
+        JSON.stringify({
+          code: "email_address_not_authorized",
+          error_code: "email_address_not_authorized",
+          msg: "test recipient restriction",
+        }),
+      );
+      return;
+    }
     res.end("{}");
     return;
   }
