@@ -1,18 +1,30 @@
+export type ServingUnit = "食" | "個" | "杯";
+export type Serving = { unit: ServingUnit; quantity: number };
+export type FoodAmount = { amount_g?: number; serving?: Serving };
+export type FoodServing = {
+  unit: ServingUnit;
+  grams?: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  kcal: number;
+};
 export type Portion = { id: string; label: string; grams: number };
 export type Food = {
   id: string;
   owner_id: string | null;
   name: string;
   brand: string;
-  protein_100g: number;
-  fat_100g: number;
-  carbs_100g: number;
-  kcal_100g: number;
+  protein_100g: number | null;
+  fat_100g: number | null;
+  carbs_100g: number | null;
+  kcal_100g: number | null;
   source_type: "manual" | "manufacturer" | "estimated" | "mext";
   source_ref: string;
   source_version: string;
   energy_basis: string;
   portions: Portion[];
+  serving?: FoodServing;
 };
 export type Meal = {
   id: string;
@@ -21,7 +33,8 @@ export type Meal = {
   consumed_at: string;
   local_date: string;
   meal_type: string;
-  amount_g: number;
+  amount_g?: number;
+  serving?: Serving;
   protein_g: number;
   fat_g: number;
   carbs_g: number;
@@ -39,7 +52,7 @@ export type Target = {
 export type Template = {
   id: string;
   name: string;
-  items: { food_id: string; amount_g: number }[];
+  items: ({ food_id: string } & FoodAmount)[];
 };
 export type TrackerData = {
   user_id: string;

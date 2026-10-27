@@ -1,7 +1,18 @@
 import { z } from "zod";
-import { mutationSchema } from "./validation";
-import { calculate, localDate } from "./nutrition";
-import type { Food, Meal, TrackerData } from "./types";
+import {
+  mutationSchema,
+  foodServingSchema,
+  amountFields,
+  hasOneAmount,
+} from "./validation";
+import {
+  calculateFood,
+  localDate,
+  sameAmount,
+  per100g,
+  keys,
+} from "./nutrition";
+import type { Food, Meal, TrackerData, FoodAmount } from "./types";
 export function initialData(): TrackerData {
   return {
     user_id: crypto.randomUUID(),
@@ -30,9 +41,8 @@ function required<T>(value: T | undefined): T {
 }
 function snapshot(
   data: TrackerData,
-  input: {
+  input: FoodAmount & {
     food_id: string | null;
-    amount_g: number;
     consumed_at: string;
     meal_type: string;
     id?: string;
@@ -40,28 +50,20 @@ function snapshot(
   old?: Meal,
 ): Meal {
   const unchanged =
-    old &&
-    old.food_id === input.food_id &&
-    Number(old.amount_g) === input.amount_g;
+    old && old.food_id === input.food_id && sameAmount(old, input);
   const base = {
     id: old?.id || crypto.randomUUID(),
     food_id: input.food_id,
-    amount_g: input.amount_g,
+    ...(input.serving
+      ? { serving: input.serving }
+      : { amount_g: input.amount_g }),
     consumed_at: input.consumed_at,
     local_date: localDate(input.consumed_at),
     meal_type: input.meal_type,
   };
   if (unchanged) return { ...old, ...base };
   const food = required(data.foods.find((f) => f.id === input.food_id));
-  const n = calculate(
-    {
-      protein: food.protein_100g,
-      fat: food.fat_100g,
-      carbs: food.carbs_100g,
-      kcal: food.kcal_100g,
-    },
-    input.amount_g,
-  );
+  const n = calculateFood(food, input);
   return {
     ...base,
     food_name_snapshot: food.name,
@@ -94,19 +96,27 @@ export function applyMutation(
       const old = p.id
         ? required(next.foods.find((f) => f.id === p.id))
         : undefined;
+      if (p.serving) {
+        const expected = p.serving.grams
+          ? per100g(p.serving, p.serving.grams)
+          : Object.fromEntries(keys.map((k) => [k, 0]));
+        if (keys.some((k) => Number(expected[k]) !== p[k]))
+          throw new Error("基準の分量と栄養値が一致しません。");
+      }
       const food: Food = {
         id: old?.id || crypto.randomUUID(),
         owner_id: next.user_id,
         name: p.name,
         brand: p.brand,
-        protein_100g: p.protein,
-        fat_100g: p.fat,
-        carbs_100g: p.carbs,
-        kcal_100g: p.kcal,
+        protein_100g: p.serving && !p.serving.grams ? null : p.protein,
+        fat_100g: p.serving && !p.serving.grams ? null : p.fat,
+        carbs_100g: p.serving && !p.serving.grams ? null : p.carbs,
+        kcal_100g: p.serving && !p.serving.grams ? null : p.kcal,
         source_type: p.source_type,
         source_ref: p.source_ref,
         source_version: p.source_version,
         energy_basis: p.energy_basis,
+        ...(p.serving ? { serving: p.serving } : {}),
         portions: p.portions.map((x) => ({ ...x, id: crypto.randomUUID() })),
       };
       next.foods = old
@@ -164,7 +174,7 @@ export function applyMutation(
       break;
     case "template": {
       op.data.items.forEach((i) =>
-        required(next.foods.find((f) => f.id === i.food_id)),
+        calculateFood(required(next.foods.find((f) => f.id === i.food_id)), i),
       );
       next.templates.push({
         id: crypto.randomUUID(),
@@ -203,43 +213,46 @@ const id = z.uuid(),
   text = z.string().max(1000),
   num = z.number().finite().min(0).max(100000),
   amount = z.number().finite().gt(0).max(100000),
-  snap = z.number().finite().min(0).max(100000000);
+  snap = z.number().finite().min(0).max(10000000000);
 const food = z.object({
   id,
   owner_id: id.nullable(),
   name: z.string().trim().min(1).max(150),
   brand: z.string().max(150),
-  protein_100g: num,
-  fat_100g: num,
-  carbs_100g: num,
-  kcal_100g: num,
+  protein_100g: num.nullable(),
+  fat_100g: num.nullable(),
+  carbs_100g: num.nullable(),
+  kcal_100g: num.nullable(),
   source_type: z.enum(["manual", "manufacturer", "estimated", "mext"]),
   source_ref: text,
   source_version: z.string().max(150),
   energy_basis: z.string().min(1).max(150),
+  serving: foodServingSchema.optional(),
   portions: z
     .array(
       z.object({ id, label: z.string().trim().min(1).max(50), grams: amount }),
     )
     .max(20),
 });
-const meal = z.object({
-  id,
-  food_id: id.nullable(),
-  food_name_snapshot: z.string().min(1).max(150),
-  consumed_at: z.iso.datetime({ offset: true }),
-  local_date: z.iso.date(),
-  meal_type: z.enum(["breakfast", "lunch", "dinner", "snack"]),
-  amount_g: amount,
-  protein_g: snap,
-  fat_g: snap,
-  carbs_g: snap,
-  calories_kcal: snap,
-  source_snapshot: z.object({
-    source_type: z.string().max(50).optional(),
-    source_ref: text.optional(),
-  }),
-});
+const meal = z
+  .object({
+    id,
+    food_id: id.nullable(),
+    food_name_snapshot: z.string().min(1).max(150),
+    consumed_at: z.iso.datetime({ offset: true }),
+    local_date: z.iso.date(),
+    meal_type: z.enum(["breakfast", "lunch", "dinner", "snack"]),
+    ...amountFields,
+    protein_g: snap,
+    fat_g: snap,
+    carbs_g: snap,
+    calories_kcal: snap,
+    source_snapshot: z.object({
+      source_type: z.string().max(50).optional(),
+      source_ref: text.optional(),
+    }),
+  })
+  .refine(hasOneAmount);
 const dataSchema = z.object({
   user_id: id,
   foods: z.array(food).max(10000),
@@ -263,7 +276,11 @@ const dataSchema = z.object({
       z.object({
         id,
         name: z.string().trim().min(1).max(100),
-        items: z.array(z.object({ food_id: id, amount_g: amount })).max(50),
+        items: z
+          .array(
+            z.object({ food_id: id, ...amountFields }).refine(hasOneAmount),
+          )
+          .max(50),
       }),
     )
     .max(10000),
@@ -290,6 +307,24 @@ export function validateData(input: unknown): TrackerData {
     throw new Error("バックアップに参照先がない食品があります。");
   if (d.meals.some((m) => localDate(m.consumed_at) !== m.local_date))
     throw new Error("記録日時と集計日が一致しません。");
+  for (const f of d.foods) {
+    if (!f.serving) {
+      if (keys.some((k) => f[`${k}_100g`] === null))
+        throw new Error("グラム基準の食品には100gあたりの栄養値が必要です。");
+      continue;
+    }
+    const expected = f.serving.grams
+      ? per100g(f.serving, f.serving.grams)
+      : null;
+    if (
+      keys.some((k) =>
+        expected
+          ? Number(expected[k]) !== f[`${k}_100g`]
+          : f[`${k}_100g`] !== null,
+      )
+    )
+      throw new Error("食品の基準の分量と栄養値が一致しません。");
+  }
   if (
     d.foods.some(
       (f) =>
@@ -304,7 +339,12 @@ export function encodeBackup(data: TrackerData): string {
   const text = JSON.stringify(
     {
       format: "pfc-tracker",
-      version: 1,
+      version:
+        data.foods.some((f) => f.serving) ||
+        data.meals.some((m) => m.serving) ||
+        data.templates.some((t) => t.items.some((i) => i.serving))
+          ? 2
+          : 1,
       exported_at: new Date().toISOString(),
       data: validateData(data),
     },
@@ -327,7 +367,7 @@ export function decodeBackup(text: string): TrackerData {
   const wrapper = z
     .object({
       format: z.literal("pfc-tracker"),
-      version: z.literal(1),
+      version: z.union([z.literal(1), z.literal(2)]),
       exported_at: z.iso.datetime({ offset: true }),
       data: z.unknown(),
     })

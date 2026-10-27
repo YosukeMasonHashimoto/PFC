@@ -27,14 +27,25 @@ import {
   aggregate,
   portionGrams,
   per100g,
-  calculate,
+  calculateFood,
+  foodNutrients,
+  hasWeight,
+  sameAmount,
+  formatAmount,
   defaults,
   keys,
   localDate,
   progress,
   type Nutrients,
 } from "@/lib/nutrition";
-import type { Food, Meal, TrackerData, Template } from "@/lib/types";
+import type {
+  Food,
+  Meal,
+  TrackerData,
+  Template,
+  FoodAmount,
+  ServingUnit,
+} from "@/lib/types";
 import { SyncAgent } from "@/components/sync-agent";
 import { SyncPanel } from "@/components/sync-panel";
 import { NutritionGuide } from "@/components/nutrition-guide";
@@ -60,12 +71,6 @@ const sources = {
 };
 const f = (n: string | number) =>
   Number(n).toLocaleString("ja-JP", { maximumFractionDigits: 1 });
-const foodN = (x: Food): Nutrients => ({
-  protein: x.protein_100g,
-  fat: x.fat_100g,
-  carbs: x.carbs_100g,
-  kcal: x.kcal_100g,
-});
 const mealN = (x: Meal): Nutrients => ({
   protein: x.protein_g,
   fat: x.fat_g,
@@ -476,7 +481,7 @@ export default function Tracker() {
                                 <div className="meal-detail">
                                   <strong>{m.food_name_snapshot}</strong>
                                   <small>
-                                    {f(m.amount_g)} g ·{" "}
+                                    {formatAmount(m)} ·{" "}
                                     {new Intl.DateTimeFormat("ja-JP", {
                                       timeZone: "Asia/Tokyo",
                                       hour: "2-digit",
@@ -650,7 +655,7 @@ export default function Tracker() {
                   </div>
                   <p className="muted">
                     {foods.length} 件 ·
-                    栄養値は100gあたり。調理前後・皮の有無は別食品として登録してください。
+                    栄養値は100gまたは1食・1個・1杯あたり。調理前後・皮の有無は別食品として登録してください。
                   </p>
                   <div className="food-grid">
                     {foods.map((food) => (
@@ -687,11 +692,16 @@ export default function Tracker() {
                         <h3>{food.name}</h3>
                         <p className="muted">{food.brand || ""}</p>
                         <strong className="food-energy">
-                          {f(food.kcal_100g)} <small>kcal / 100g</small>
+                          {f(foodNutrients(food).kcal)}{" "}
+                          <small>
+                            kcal /{" "}
+                            {food.serving ? `1${food.serving.unit}` : "100g"}
+                          </small>
                         </strong>
                         <p className="mini-macros">
-                          P {f(food.protein_100g)}　F {f(food.fat_100g)}　C{" "}
-                          {f(food.carbs_100g)} g
+                          P {f(foodNutrients(food).protein)}　F{" "}
+                          {f(foodNutrients(food).fat)}　C{" "}
+                          {f(foodNutrients(food).carbs)} g
                         </p>
                         <details>
                           <summary>出典・ポーション</summary>
@@ -930,37 +940,71 @@ function EditorDialog({
   const [foodId, setFoodId] = useState(
     editor.type === "meal" ? editor.food?.id || existing?.food_id || "" : "",
   );
+  const initialFood =
+    editor.type === "meal"
+      ? data.foods.find((f) => f.id === (editor.food?.id || existing?.food_id))
+      : undefined;
+  const [referenceGrams, setReferenceGrams] = useState(
+    editor.type === "food" && editor.food
+      ? String(editor.food.serving ? (editor.food.serving.grams ?? "") : 100)
+      : "100",
+  );
+  const [referenceEdited, setReferenceEdited] = useState(false);
+  const [servingUnit, setServingUnit] = useState<ServingUnit | "">(
+    editor.type === "food" ? editor.food?.serving?.unit || "" : "",
+  );
   const [amount, setAmount] = useState(
     String(
-      existing?.amount_g ||
+      existing?.serving?.quantity ||
+        existing?.amount_g ||
         (editor.type === "meal" ? editor.amount : undefined) ||
-        100,
+        (initialFood?.serving ? 1 : 100),
     ),
   );
-  const [unit, setUnit] = useState("g");
-  const [items, setItems] = useState<{ food_id: string; amount_g: number }[]>(
-    [],
+  const [unit, setUnit] = useState(
+    existing
+      ? existing.serving
+        ? `serving:${existing.serving.unit}`
+        : "g"
+      : initialFood?.serving
+        ? `serving:${initialFood.serving.unit}`
+        : "g",
   );
+  const [items, setItems] = useState<Template["items"]>([]);
   const [localError, setLocalError] = useState("");
   const food = data.foods.find((x) => x.id === foodId);
   const portion = food?.portions.find((p) => p.id === unit);
   let grams = Number(amount);
-  if (unit !== "g") {
+  const isServing = unit.startsWith("serving:");
+  if (unit !== "g" && !isServing) {
     try {
       grams = Number(portionGrams(amount, portion?.grams || 0));
     } catch {
       grams = NaN;
     }
   }
+  const selectedServingUnit = isServing
+    ? (unit.slice("serving:".length) as ServingUnit)
+    : undefined;
+  const selectedAmount: FoodAmount =
+    isServing && selectedServingUnit
+      ? { serving: { unit: selectedServingUnit, quantity: Number(amount) } }
+      : { amount_g: grams };
+  function selectFood(id: string) {
+    const next = data.foods.find((f) => f.id === id);
+    setFoodId(id);
+    setUnit(next?.serving ? `serving:${next.serving.unit}` : "g");
+    setAmount(next?.serving ? "1" : "100");
+  }
   let preview: Nutrients | null = null;
   try {
     if (
       existing &&
       foodId === existing.food_id &&
-      grams === Number(existing.amount_g)
+      sameAmount(existing, selectedAmount)
     )
       preview = mealN(existing);
-    else if (food) preview = calculate(foodN(food), grams);
+    else if (food) preview = calculateFood(food, selectedAmount);
   } catch {
     /* Invalid values are rejected by the form/server. */
   }
@@ -978,18 +1022,33 @@ function EditorDialog({
     const fd = new FormData(e.currentTarget),
       obj = Object.fromEntries(fd);
     try {
-      if (editor.type === "food")
+      if (editor.type === "food") {
+        if (!referenceGrams.trim() && !servingUnit)
+          throw new Error(
+            "基準の分量 (g) または1食・1個・1杯基準のいずれかを入力してください。",
+          );
+        const nutrients = {
+          protein: String(obj.protein),
+          fat: String(obj.fat),
+          carbs: String(obj.carbs),
+          kcal: String(obj.kcal),
+        };
+        const weightNutrients = referenceGrams.trim()
+          ? per100g(nutrients, referenceGrams)
+          : Object.fromEntries(keys.map((k) => [k, 0]));
+        const serving = servingUnit
+          ? {
+              unit: servingUnit,
+              ...(referenceGrams.trim()
+                ? { grams: Number(referenceGrams) }
+                : {}),
+              ...Object.fromEntries(keys.map((k) => [k, Number(nutrients[k])])),
+            }
+          : undefined;
         onSave("food", {
           ...obj,
-          ...per100g(
-            {
-              protein: String(obj.protein),
-              fat: String(obj.fat),
-              carbs: String(obj.carbs),
-              kcal: String(obj.kcal),
-            },
-            String(obj.reference_grams),
-          ),
+          ...weightNutrients,
+          serving,
           id: editor.food?.id,
           brand: editor.food?.brand || "",
           source_type: editor.food?.source_type || "manual",
@@ -1001,13 +1060,20 @@ function EditorDialog({
               grams: p.grams,
             })) || [],
         });
+      }
       if (editor.type === "meal") {
-        if (!Number.isFinite(grams) || grams <= 0 || grams > 100000)
+        if (
+          !Number.isFinite(Number(amount)) ||
+          Number(amount) <= 0 ||
+          Number(amount) > 100000 ||
+          (!isServing &&
+            (!Number.isFinite(grams) || grams <= 0 || grams > 100000))
+        )
           throw new Error("重量は0より大きく100,000g以下にしてください。");
         onSave("meal", {
           id: existing?.id,
           food_id: foodId || null,
-          amount_g: grams,
+          ...selectedAmount,
           meal_type: obj.meal_type,
           consumed_at: new Date(`${obj.consumed_at}:00+09:00`).toISOString(),
         });
@@ -1095,16 +1161,44 @@ function EditorDialog({
                   min="0.001"
                   max="100000"
                   step="any"
-                  required
-                  defaultValue="100"
+                  value={referenceGrams}
+                  onChange={(e) => {
+                    setReferenceEdited(true);
+                    setReferenceGrams(e.target.value);
+                  }}
                 />
               </label>
+              <label>
+                1食・1個・1杯基準
+                <select
+                  aria-label="1食・1個・1杯基準"
+                  value={servingUnit}
+                  onChange={(e) => {
+                    setServingUnit(e.target.value as ServingUnit | "");
+                    if (
+                      e.target.value &&
+                      !servingUnit &&
+                      !referenceEdited &&
+                      editor.type === "food" &&
+                      !editor.food
+                    )
+                      setReferenceGrams("");
+                  }}
+                >
+                  <option value="">指定しない</option>
+                  <option value="食">1食あたり</option>
+                  <option value="個">1個あたり</option>
+                  <option value="杯">1杯あたり</option>
+                </select>
+              </label>
               <small>
-                上の分量あたりの栄養成分を入力してください。例：1袋30gなら30と入力します。
-                保存時に100gあたりに換算します。編集時は換算後の値を表示します。
+                グラム数か、1食・1個・1杯のいずれかを入力してください。
+                重量が不明な場合はグラム数を空欄にし、1食・1個・1杯あたりの栄養成分を入力します。
+                両方を入力した場合は、その重量を1食・1個・1杯分として扱います。
+                グラム数のみの場合は保存時に100gあたりへ換算し、編集時は換算後の値を表示します。
               </small>
               <NutrientFields
-                values={editor.food ? foodN(editor.food) : undefined}
+                values={editor.food ? foodNutrients(editor.food) : undefined}
               />
               <label>
                 出典 URL / 食品コード / 商品表示の情報
@@ -1124,8 +1218,7 @@ function EditorDialog({
                   required={!existing || !!existing.food_id}
                   value={foodId}
                   onChange={(e) => {
-                    setFoodId(e.target.value);
-                    setUnit("g");
+                    selectFood(e.target.value);
                   }}
                 >
                   <option value="">
@@ -1160,26 +1253,48 @@ function EditorDialog({
                 <label>
                   単位
                   <select
+                    disabled={!!existing && !existing.food_id && !foodId}
                     aria-label="単位"
                     value={unit}
                     onChange={(e) => setUnit(e.target.value)}
                   >
-                    <option value="g">g</option>
-                    {food?.portions.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label} ({f(p.grams)}g)
+                    {(!food ||
+                      hasWeight(food) ||
+                      existing?.amount_g !== undefined) && (
+                      <option value="g">g</option>
+                    )}
+                    {food?.serving && (
+                      <option value={`serving:${food.serving.unit}`}>
+                        {food.serving.unit}
                       </option>
-                    ))}
+                    )}
+                    {existing?.serving &&
+                      existing.serving.unit !== food?.serving?.unit && (
+                        <option value={`serving:${existing.serving.unit}`}>
+                          {existing.serving.unit}（記録時）
+                        </option>
+                      )}
+                    {food &&
+                      hasWeight(food) &&
+                      food.portions.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label} ({f(p.grams)}g)
+                        </option>
+                      ))}
                   </select>
                 </label>
               </div>
               {!food?.portions.length && (
-                <small>摂取量をグラムで入力してください。</small>
+                <small>
+                  {isServing
+                    ? `食べた数を入力してください。例：半分なら0.5${selectedServingUnit}`
+                    : "摂取量をグラムで入力してください。"}
+                </small>
               )}
               {preview && (
                 <div className="nutrition-preview">
                   <strong>
-                    {f(grams)} g · {f(preview.kcal)} kcal
+                    {formatAmount(selectedAmount)} · {f(preview.kcal)} kcal
                   </strong>
                   <span>
                     P {f(preview.protein)} / F {f(preview.fat)} / C{" "}
@@ -1188,7 +1303,7 @@ function EditorDialog({
                   <small>
                     {food && sources[food.source_type]}
                     {existing
-                      ? " · 食品・重量変更時のみ現在のマスター値で再計算"
+                      ? " · 食品・分量変更時のみ現在のマスター値で再計算"
                       : ""}
                   </small>
                 </div>
@@ -1245,7 +1360,7 @@ function EditorDialog({
                 追加する食品
                 <select
                   value={foodId}
-                  onChange={(e) => setFoodId(e.target.value)}
+                  onChange={(e) => selectFood(e.target.value)}
                 >
                   <option value="">食品を選択</option>
                   {data.foods.map((f) => (
@@ -1256,7 +1371,7 @@ function EditorDialog({
                 </select>
               </label>
               <label>
-                重量 (g)
+                {food?.serving ? `分量 (${food.serving.unit})` : "重量 (g)"}
                 <input
                   type="number"
                   min="0.001"
@@ -1279,7 +1394,7 @@ function EditorDialog({
                 onClick={() =>
                   setItems((rows) => [
                     ...rows,
-                    { food_id: foodId, amount_g: Number(amount) },
+                    { food_id: foodId, ...selectedAmount },
                   ])
                 }
               >
@@ -1289,7 +1404,7 @@ function EditorDialog({
                 <div className="template-row" key={i}>
                   <span>
                     {data.foods.find((f) => f.id === item.food_id)?.name} ·{" "}
-                    {f(item.amount_g)}g
+                    {formatAmount(item)}
                   </span>
                   <Button
                     type="button"
@@ -1313,7 +1428,7 @@ function EditorDialog({
                 <span key={i}>
                   {data.foods.find((f) => f.id === item.food_id)?.name ||
                     "参照不可の食品"}{" "}
-                  · {f(item.amount_g)}g
+                  · {formatAmount(item)}
                 </span>
               ))}
               <small>

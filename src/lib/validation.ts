@@ -8,12 +8,29 @@ const positive = numeric
   .pipe(z.number().finite().gt(0).max(100000));
 const id = z.uuid();
 export const nutrients = { protein: num, fat: num, carbs: num, kcal: num };
+export const servingUnit = z.enum(["食", "個", "杯"]);
+export const servingSchema = z.object({
+  unit: servingUnit,
+  quantity: positive,
+});
+export const foodServingSchema = z.object({
+  unit: servingUnit,
+  grams: positive.optional(),
+  ...nutrients,
+});
+export const amountFields = {
+  amount_g: positive.optional(),
+  serving: servingSchema.optional(),
+};
+export const hasOneAmount = (x: { amount_g?: number; serving?: unknown }) =>
+  (x.amount_g !== undefined) !== (x.serving !== undefined);
 export const foodSchema = z
   .object({
     id: id.optional(),
     name: z.string().trim().min(1).max(150),
     brand: z.string().trim().max(150).default(""),
     ...nutrients,
+    serving: foodServingSchema.optional(),
     source_type: z.enum(["manual", "manufacturer", "estimated", "mext"]),
     source_ref: z.string().max(1000),
     source_version: z.string().max(150),
@@ -28,13 +45,15 @@ export const foodSchema = z
     (x) => new Set(x.portions.map((p) => p.label)).size === x.portions.length,
     "ポーション名の重複があります",
   );
-export const mealSchema = z.object({
-  id: id.optional(),
-  food_id: id.nullable(),
-  amount_g: positive,
-  consumed_at: z.iso.datetime({ offset: true }),
-  meal_type: z.enum(["breakfast", "lunch", "dinner", "snack"]),
-});
+export const mealSchema = z
+  .object({
+    id: id.optional(),
+    food_id: id.nullable(),
+    ...amountFields,
+    consumed_at: z.iso.datetime({ offset: true }),
+    meal_type: z.enum(["breakfast", "lunch", "dinner", "snack"]),
+  })
+  .refine(hasOneAmount, "重量または個数のどちらか一方を指定してください");
 export const targetSchema = z.object({
   ...nutrients,
   effective_from: z.iso.date(),
@@ -42,7 +61,7 @@ export const targetSchema = z.object({
 export const templateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   items: z
-    .array(z.object({ food_id: id, amount_g: positive }))
+    .array(z.object({ food_id: id, ...amountFields }).refine(hasOneAmount))
     .min(1)
     .max(50),
 });

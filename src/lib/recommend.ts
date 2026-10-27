@@ -1,13 +1,12 @@
 import Decimal from "decimal.js";
-import type { Food, Meal } from "./types";
-import { calculate, keys, type Nutrients } from "./nutrition";
-export type Suggestion = { food: Food; grams: number; observations: number };
-const nutrition = (f: Food): Nutrients => ({
-  protein: f.protein_100g,
-  fat: f.fat_100g,
-  carbs: f.carbs_100g,
-  kcal: f.kcal_100g,
-});
+import type { Food, Meal, Serving } from "./types";
+import { calculateFood, hasWeight, keys, type Nutrients } from "./nutrition";
+export type Suggestion = {
+  food: Food;
+  grams?: number;
+  serving?: Serving;
+  observations: number;
+};
 /** One observation is one recorded food entry, not all snacks aggregated across a day. */
 export function observedServings(
   foodId: string,
@@ -19,6 +18,7 @@ export function observedServings(
       (m) =>
         m.food_id === foodId &&
         m.local_date <= date &&
+        m.amount_g !== undefined &&
         m.amount_g > 0 &&
         Number.isFinite(m.amount_g),
     )
@@ -40,6 +40,43 @@ export function observedServings(
     .sort((a, b) => b.observations - a.observations || a.recent - b.recent)
     .slice(0, 3)
     .map(({ grams, observations }) => ({ grams, observations }));
+}
+function observedPortions(
+  food: Food,
+  meals: Meal[],
+  date: string,
+): Omit<Suggestion, "food">[] {
+  const grams = hasWeight(food) ? observedServings(food.id, meals, date) : [];
+  if (!food.serving) return grams;
+  const recent = meals
+    .filter(
+      (m) =>
+        m.food_id === food.id &&
+        m.local_date <= date &&
+        m.serving?.unit === food.serving!.unit,
+    )
+    .sort((a, b) => Date.parse(b.consumed_at) - Date.parse(a.consumed_at))
+    .slice(0, 30);
+  const counts = new Map<
+    number,
+    { serving: Serving; observations: number; recent: number }
+  >();
+  recent.forEach((m, i) => {
+    const quantity = m.serving!.quantity;
+    const old = counts.get(quantity);
+    counts.set(quantity, {
+      serving: m.serving!,
+      observations: (old?.observations || 0) + 1,
+      recent: old?.recent ?? i,
+    });
+  });
+  return [
+    ...grams,
+    ...[...counts.values()]
+      .sort((a, b) => b.observations - a.observations || a.recent - b.recent)
+      .slice(0, 3)
+      .map(({ serving, observations }) => ({ serving, observations })),
+  ];
 }
 /** Discrete beam search: never invent grams, fractions or multiples of observed servings. */
 export function recommend(
@@ -63,12 +100,17 @@ export function recommend(
   const initial = score([0, 0, 0, 0]);
   const choices = foods
     .flatMap((food) =>
-      observedServings(food.id, meals, date).map((portion) => ({
+      observedPortions(food, meals, date).map((portion) => ({
         food,
         ...portion,
         a: keys.map(
           (k, i) =>
-            (Number(nutrition(food)[k]) * portion.grams) / 100 / scales[i],
+            Number(
+              calculateFood(food, {
+                amount_g: portion.grams,
+                serving: portion.serving,
+              })[k],
+            ) / scales[i],
         ),
       })),
     )
@@ -95,7 +137,10 @@ export function recommend(
         if (plan.items.some((i) => i.food.id === item.food.id)) continue;
         const items = [...plan.items, item];
         const signature = items
-          .map((x) => `${x.food.id}:${x.grams}`)
+          .map(
+            (x) =>
+              `${x.food.id}:${x.serving ? `${x.serving.quantity}${x.serving.unit}` : `${x.grams}g`}`,
+          )
           .sort()
           .join("|");
         if (seen.has(signature)) continue;
@@ -111,9 +156,9 @@ export function recommend(
     if (!beam.length) break;
   }
   return best.score < initial - 1e-8
-    ? best.items.map(({ food, grams, observations }) => ({
+    ? best.items.map(({ food, grams, serving, observations }) => ({
         food,
-        grams,
+        ...(serving ? { serving } : { grams }),
         observations,
       }))
     : [];
@@ -122,7 +167,9 @@ export function project(
   totals: Nutrients,
   suggestions: Suggestion[],
 ): Nutrients {
-  const added = suggestions.map((x) => calculate(nutrition(x.food), x.grams));
+  const added = suggestions.map((x) =>
+    calculateFood(x.food, { amount_g: x.grams, serving: x.serving }),
+  );
   return Object.fromEntries(
     keys.map((k) => [
       k,

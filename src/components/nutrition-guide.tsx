@@ -1,7 +1,7 @@
 "use client";
 import { useMemo } from "react";
 import { recommend, project } from "@/lib/recommend";
-import { keys, type Nutrients } from "@/lib/nutrition";
+import { keys, formatAmount, type Nutrients } from "@/lib/nutrition";
 import type { Meal, Food } from "@/lib/types";
 import { AppLink } from "./pwa";
 const labels = { protein: "P", fat: "F", carbs: "C", kcal: "カロリー" };
@@ -83,7 +83,13 @@ export function NutritionGuide({
             {suggestions.map((x) => (
               <div key={x.food.id}>
                 <span>
-                  <strong>{x.food.name}</strong> を <b>{x.grams}g</b>
+                  <strong>{x.food.name}</strong> を{" "}
+                  <b>
+                    {formatAmount({
+                      amount_g: x.grams,
+                      serving: x.serving,
+                    }).replace(" g", "g")}
+                  </b>
                 </span>
               </div>
             ))}
@@ -109,7 +115,7 @@ export function NutritionGuide({
         <p className="muted">
           {foods.length
             ? "食事の実績がある食品から、目標に近づく組み合わせを見つけられませんでした。まず普段食べる分量を記録してください。"
-            : "食品を登録すると、あと何を何g食べるかの目安が表示されます。"}{" "}
+            : "食品を登録すると、あと何をどれくらい食べるかの目安が表示されます。"}{" "}
           <AppLink href="/foods">食品を登録する</AppLink>
         </p>
       )}
