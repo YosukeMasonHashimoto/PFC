@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import {
   aggregate,
   portionGrams,
+  per100g,
   calculate,
   defaults,
   keys,
@@ -308,9 +309,6 @@ export default function Tracker() {
               meals={data.meals}
               totals={totals}
               goals={goals}
-              onRecord={(food, amount) =>
-                setEditor({ type: "meal", food, amount })
-              }
             />
           )}
           {!data && error && (
@@ -983,6 +981,15 @@ function EditorDialog({
       if (editor.type === "food")
         onSave("food", {
           ...obj,
+          ...per100g(
+            {
+              protein: String(obj.protein),
+              fat: String(obj.fat),
+              carbs: String(obj.carbs),
+              kcal: String(obj.kcal),
+            },
+            String(obj.reference_grams),
+          ),
           id: editor.food?.id,
           brand: editor.food?.brand || "",
           source_type: editor.food?.source_type || "manual",
@@ -1079,7 +1086,23 @@ function EditorDialog({
               <small>
                 生・加熱後、皮あり・なし、炊飯前・後は別食品として登録。
               </small>
-              <h3>100gあたりの栄養成分</h3>
+              <h3>栄養成分と基準の分量</h3>
+              <label>
+                基準の分量 (g)
+                <input
+                  name="reference_grams"
+                  type="number"
+                  min="0.001"
+                  max="100000"
+                  step="any"
+                  required
+                  defaultValue="100"
+                />
+              </label>
+              <small>
+                上の分量あたりの栄養成分を入力してください。例：1袋30gなら30と入力します。
+                保存時に100gあたりに換算します。編集時は換算後の値を表示します。
+              </small>
               <NutrientFields
                 values={editor.food ? foodN(editor.food) : undefined}
               />

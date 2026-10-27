@@ -6,7 +6,11 @@ const env = {
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "pfc-test-public-key",
 };
 for (const args of [
-  ["node_modules/next/dist/bin/next", "build"],
+  [
+    "node_modules/next/dist/bin/next",
+    "build",
+    ...(process.env.PFC_E2E_WEBPACK === "1" ? ["--webpack"] : []),
+  ],
   ["scripts/build-pwa.mjs"],
   ["node_modules/@playwright/test/cli.js", "test", ...process.argv.slice(2)],
 ]) {

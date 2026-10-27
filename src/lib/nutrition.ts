@@ -15,6 +15,28 @@ export function calculate(food: Nutrients, grams: string | number): Nutrients {
     keys.map((k) => [k, new Decimal(food[k]).mul(g).div(100).toString()]),
   ) as Nutrients;
 }
+/** Convert label values for an arbitrary serving to the existing 100g basis. */
+export function per100g(food: Nutrients, grams: string | number): Nutrients {
+  const g = new Decimal(grams);
+  if (!g.isFinite() || g.lte(0) || g.gt(100000))
+    throw new Error("基準の分量は0より大きく100,000g以下で入力してください。");
+  return Object.fromEntries(
+    keys.map((key) => {
+      const value = new Decimal(food[key]);
+      const normalized = value.mul(100).div(g);
+      if (
+        !value.isFinite() ||
+        value.lt(0) ||
+        value.gt(100000) ||
+        normalized.gt(100000)
+      )
+        throw new Error(
+          "栄養値は0以上で、100g換算で100,000以下になるよう入力してください。",
+        );
+      return [key, normalized.toString()];
+    }),
+  ) as Nutrients;
+}
 export function aggregate(items: Nutrients[]): Nutrients {
   return Object.fromEntries(
     keys.map((k) => [

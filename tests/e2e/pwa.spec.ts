@@ -164,6 +164,14 @@ test("standalone mode and iPhone file sharing preserve user activation and handl
   await ready(page);
   await expect(page.getByText("ホーム画面版で利用中")).toBeVisible();
   await page.getByRole("button", { name: "ファイルに保存・共有" }).click();
+  // File.text() in the share adapter resolves after the click handler returns.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean((window as Window & { __shared?: unknown }).__shared),
+      ),
+    )
+    .toBe(true);
   const shared = await page.evaluate(
     () =>
       (

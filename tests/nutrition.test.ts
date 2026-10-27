@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calculate,
+  per100g,
   portionGrams,
   aggregate,
   localDate,
@@ -23,6 +24,29 @@ describe("nutrition precision and published energy", () => {
       kcal: "567",
     });
     expect(calculate(food, 150).kcal).toBe("283.5");
+  });
+  it("normalizes arbitrary label weights and calculates the recorded serving", () => {
+    const label = { protein: "6", fat: "3", carbs: "15", kcal: "111" };
+    const normalized = per100g(label, "30");
+    expect(normalized).toEqual({
+      protein: "20",
+      fat: "10",
+      carbs: "50",
+      kcal: "370",
+    });
+    expect(calculate(normalized, 30)).toEqual(label);
+    expect(calculate(normalized, 60).kcal).toBe("222");
+    expect(per100g(food, 100)).toEqual(food);
+    expect(
+      per100g({ protein: "0.03", fat: 0, carbs: 0, kcal: "0.3" }, "0.3")
+        .protein,
+    ).toBe("10");
+  });
+  it("rejects invalid food reference weights and nutrients", () => {
+    for (const grams of [0, -1, Infinity, NaN, 100001, "", " "])
+      expect(() => per100g(food, grams)).toThrow();
+    for (const protein of [-1, Infinity, NaN, "", 100001])
+      expect(() => per100g({ ...food, protein }, 30)).toThrow();
   });
   it("aggregates snapshots without intermediate rounding", () => {
     const x = calculate({ protein: 0.1, fat: 0, carbs: 0, kcal: 1 }, 33.3);

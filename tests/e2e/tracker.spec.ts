@@ -346,9 +346,9 @@ test("failed persistent writes never report success or replace previous data", a
   ).toBeVisible();
 });
 
-test("simplified food form and persistent live meal suggestions", async ({
+test("simplified food form and non-sticky live meal suggestions", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.goto("/foods");
   await page
     .getByRole("button", { name: "食品を登録", exact: true })
@@ -364,26 +364,57 @@ test("simplified food form and persistent live meal suggestions", async ({
   ])
     await expect(d.getByText(label, { exact: false })).toHaveCount(0);
   await d.getByLabel("食品名", { exact: true }).fill("目安用架空食品");
+  await d.getByLabel("基準の分量 (g)", { exact: true }).fill("30");
   for (const [label, value] of [
-    ["たんぱく質 (g)", "20"],
-    ["脂質 (g)", "10"],
-    ["炭水化物 (g)", "50"],
-    ["カロリー (kcal)", "370"],
+    ["たんぱく質 (g)", "6"],
+    ["脂質 (g)", "3"],
+    ["炭水化物 (g)", "15"],
+    ["カロリー (kcal)", "111"],
   ])
     await d.getByLabel(label, { exact: true }).fill(value);
+  await page.screenshot({
+    path: testInfo.outputPath("food-registration-30g.png"),
+    fullPage: true,
+  });
   await d.getByRole("button", { name: "保存する" }).click();
   await expect(d).not.toBeVisible();
+  await expect(page.locator(".food-energy")).toContainText("370");
+  await page.reload();
+  await expect(page.locator(".food-energy")).toContainText("370");
+  await page.getByRole("button", { name: "編集", exact: true }).click();
+  await expect(d.getByLabel("基準の分量 (g)", { exact: true })).toHaveValue(
+    "100",
+  );
+  await expect(d.getByLabel("たんぱく質 (g)", { exact: true })).toHaveValue(
+    "20",
+  );
+  await expect(d.getByLabel("カロリー (kcal)", { exact: true })).toHaveValue(
+    "370",
+  );
+  await d.getByRole("button", { name: "閉じる", exact: true }).click();
   await page.getByRole("button", { name: "記録", exact: true }).click();
+  await d.getByLabel("分量").fill("30");
+  await expect(d.locator(".nutrition-preview")).toContainText("111 kcal");
   await d.getByLabel("分量").fill("100");
   await d.getByRole("button", { name: "保存する" }).click();
   await expect(d).not.toBeVisible();
-  const guide = page.getByRole("region", { name: "目標までの食事目安" });
+  const guide = page.getByRole("region", {
+    name: "今日の目標まで、あとどれくらい？",
+  });
   await expect(guide).toContainText("目安用架空食品");
   const before = await guide.locator(".remaining-chips").first().innerText();
-  await guide.getByRole("button", { name: "この分量で記録" }).click();
-  const grams = Number(await d.getByLabel("分量").inputValue());
-  expect(grams).toBeGreaterThan(0);
-  expect(grams).toBeLessThanOrEqual(500);
+  await expect(
+    guide.getByRole("heading", { name: "今日の目標まで、あとどれくらい？" }),
+  ).toBeVisible();
+  await expect(
+    guide.getByRole("button", { name: "この分量で記録" }),
+  ).toHaveCount(0);
+  await expect(guide).not.toContainText("（記録した1食分）");
+  await expect(guide.locator(".guide-suggestions")).toContainText("100g");
+  await guide.getByText("候補をすべて食べた場合の残量・超過").click();
+  await expect(guide.locator("details .remaining-chips")).toBeVisible();
+  await page.getByRole("button", { name: "記録", exact: true }).click();
+  await d.getByLabel("分量").fill("100");
   await d.getByRole("button", { name: "保存する" }).click();
   await expect(d).not.toBeVisible();
   await expect(guide.locator(".remaining-chips").first()).not.toHaveText(
@@ -394,8 +425,31 @@ test("simplified food form and persistent live meal suggestions", async ({
     .getByRole("link", { name: "ホーム", exact: true })
     .click();
   await expect(guide).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("guide-mobile.png"),
+    fullPage: true,
+  });
+  const top = await guide.evaluate((el) => el.getBoundingClientRect().top);
   await page.evaluate(() => window.scrollTo(0, 700));
+  const scrollY = await page.evaluate(() => window.scrollY);
+  expect(scrollY).toBeGreaterThan(0);
+  expect(await guide.evaluate((el) => getComputedStyle(el).position)).toBe(
+    "static",
+  );
   expect(
     await guide.evaluate((el) => el.getBoundingClientRect().top),
-  ).toBeLessThan(60);
+  ).toBeCloseTo(top - scrollY, 0);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(guide).toBeVisible();
+  await expect(
+    guide.getByRole("button", { name: "この分量で記録" }),
+  ).toHaveCount(0);
+  expect(await guide.evaluate((el) => getComputedStyle(el).position)).toBe(
+    "static",
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("guide-desktop.png"),
+    fullPage: true,
+  });
 });

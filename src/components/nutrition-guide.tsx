@@ -3,7 +3,6 @@ import { useMemo } from "react";
 import { recommend, project } from "@/lib/recommend";
 import { keys, type Nutrients } from "@/lib/nutrition";
 import type { Meal, Food } from "@/lib/types";
-import { Button } from "./ui/button";
 import { AppLink } from "./pwa";
 const labels = { protein: "P", fat: "F", carbs: "C", kcal: "カロリー" };
 const f = (value: number | string) =>
@@ -31,14 +30,12 @@ export function NutritionGuide({
   meals,
   totals,
   goals,
-  onRecord,
 }: {
   date: string;
   foods: Food[];
   meals: Meal[];
   totals: Nutrients;
   goals: Nutrients;
-  onRecord: (food: Food, grams: number) => void;
 }) {
   const { protein: p, fat: fats, carbs: c, kcal: k } = totals;
   const { protein: gp, fat: gf, carbs: gc, kcal: gk } = goals;
@@ -58,9 +55,12 @@ export function NutritionGuide({
   );
   const after = project(totals, suggestions);
   return (
-    <section className="card nutrition-guide" aria-label="目標までの食事目安">
+    <section
+      className="card nutrition-guide"
+      aria-label="今日の目標まで、あとどれくらい？"
+    >
       <div className="guide-heading">
-        <h2>目標までの食事目安</h2>
+        <h2>今日の目標まで、あとどれくらい？</h2>
         <small>{date} · 日本時間</small>
       </div>
       <div className="remaining-chips" aria-live="polite">
@@ -84,15 +84,7 @@ export function NutritionGuide({
               <div key={x.food.id}>
                 <span>
                   <strong>{x.food.name}</strong> を <b>{x.grams}g</b>
-                  （記録した1食分）
                 </span>
-                <Button
-                  size="default"
-                  variant="outline"
-                  onClick={() => onRecord(x.food, x.grams)}
-                >
-                  この分量で記録
-                </Button>
               </div>
             ))}
           </div>
