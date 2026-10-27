@@ -373,6 +373,10 @@ test("simplified food form and persistent live meal suggestions", async ({
     await d.getByLabel(label, { exact: true }).fill(value);
   await d.getByRole("button", { name: "保存する" }).click();
   await expect(d).not.toBeVisible();
+  await page.getByRole("button", { name: "記録", exact: true }).click();
+  await d.getByLabel("分量").fill("100");
+  await d.getByRole("button", { name: "保存する" }).click();
+  await expect(d).not.toBeVisible();
   const guide = page.getByRole("region", { name: "目標までの食事目安" });
   await expect(guide).toContainText("目安用架空食品");
   const before = await guide.locator(".remaining-chips").first().innerText();

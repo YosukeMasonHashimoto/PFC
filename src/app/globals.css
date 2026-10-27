@@ -1186,3 +1186,15 @@ html {
     margin-top: 2px;
   }
 }
+.sync-status {
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #edf7f1;
+  color: #26745a;
+  font-size: 12px;
+}
+.sync-error {
+  background: #fff0eb;
+  color: #ac5136;
+}

@@ -34,6 +34,8 @@ import {
   type Nutrients,
 } from "@/lib/nutrition";
 import type { Food, Meal, TrackerData, Template } from "@/lib/types";
+import { SyncAgent } from "@/components/sync-agent";
+import { SyncPanel } from "@/components/sync-panel";
 import { NutritionGuide } from "@/components/nutrition-guide";
 import { BackupControls } from "@/components/backup-controls";
 import { loadLocal, mutateLocal } from "@/lib/local-store";
@@ -115,6 +117,7 @@ export default function Tracker() {
         load().catch((e) => setError(e.message));
     };
     document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pfc-sync-data", refresh);
     const channel =
       typeof BroadcastChannel !== "undefined"
         ? new BroadcastChannel("pfc-local-updates")
@@ -123,6 +126,7 @@ export default function Tracker() {
       channel.onmessage = () => load().catch((e) => setError(e.message));
     return () => {
       document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pfc-sync-data", refresh);
       channel?.close();
     };
   }, [load]);
@@ -276,6 +280,7 @@ export default function Tracker() {
             )}
           </div>
           <PwaStatus />
+          <SyncAgent />
           {error && (
             <div className="message error" role="alert">
               {error}{" "}
@@ -300,6 +305,7 @@ export default function Tracker() {
             <NutritionGuide
               date={date}
               foods={data.foods}
+              meals={data.meals}
               totals={totals}
               goals={goals}
               onRecord={(food, amount) =>
@@ -802,8 +808,9 @@ export default function Tracker() {
                     <h2>保存とバックアップ</h2>
                     <p>記録のタイムゾーン：Asia/Tokyo</p>
                     <p className="muted">
-                      日時は日本時間で入力・集計します。ログインは不要です。データはこの端末の、このブラウザに保存されます。iPhoneとMacの自動同期はありません。ブラウザデータを削除すると記録も消えます。
+                      日時は日本時間で入力・集計します。メールログインは不要です。記録は端末に保存し、下の端末連携を設定するとスマホ・PCで自動同期します。バックアップも引き続き利用できます。
                     </p>
+                    <SyncPanel />
                     <PwaPanel />
                     <BackupControls onRestore={load} data={data} />
                   </section>

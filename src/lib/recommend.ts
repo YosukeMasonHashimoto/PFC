@@ -1,102 +1,128 @@
-import type { Food } from "./types";
+import Decimal from "decimal.js";
+import type { Food, Meal } from "./types";
 import { calculate, keys, type Nutrients } from "./nutrition";
-export type Suggestion = { food: Food; grams: number };
+export type Suggestion = { food: Food; grams: number; observations: number };
 const nutrition = (f: Food): Nutrients => ({
   protein: f.protein_100g,
   fat: f.fat_100g,
   carbs: f.carbs_100g,
   kcal: f.kcal_100g,
 });
-/** Bounded, nonnegative least-squares heuristic over the user's own foods, not a guaranteed exact solution. */
+/** One observation is one recorded food entry, not all snacks aggregated across a day. */
+export function observedServings(
+  foodId: string,
+  meals: Meal[],
+  date: string,
+): { grams: number; observations: number }[] {
+  const recent = meals
+    .filter(
+      (m) =>
+        m.food_id === foodId &&
+        m.local_date <= date &&
+        m.amount_g > 0 &&
+        Number.isFinite(m.amount_g),
+    )
+    .sort((a, b) => Date.parse(b.consumed_at) - Date.parse(a.consumed_at))
+    .slice(0, 30);
+  const sizes = new Map<
+    number,
+    { grams: number; observations: number; recent: number }
+  >();
+  recent.forEach((m, i) => {
+    const old = sizes.get(Number(m.amount_g));
+    sizes.set(Number(m.amount_g), {
+      grams: Number(m.amount_g),
+      observations: (old?.observations || 0) + 1,
+      recent: old?.recent ?? i,
+    });
+  });
+  return [...sizes.values()]
+    .sort((a, b) => b.observations - a.observations || a.recent - b.recent)
+    .slice(0, 3)
+    .map(({ grams, observations }) => ({ grams, observations }));
+}
+/** Discrete beam search: never invent grams, fractions or multiples of observed servings. */
 export function recommend(
   foods: Food[],
   totals: Nutrients,
   goals: Nutrients,
+  meals: Meal[] = [],
+  date = "9999-12-31",
 ): Suggestion[] {
-  const target = keys.map((k) =>
+  const deficit = keys.map((k) =>
     Math.max(0, Number(goals[k]) - Number(totals[k])),
   );
-  if (target.every((x) => x <= 0)) return [];
-  const scales = keys.map((k) => Math.max(Number(goals[k]), 1));
-  const b = target.map((v, i) => v / scales[i]);
-  const candidates = foods
-    .map((food) => ({
-      food,
-      a: keys.map((k, i) => Number(nutrition(food)[k]) / 100 / scales[i]),
-    }))
-    .filter((c) => c.a.every(Number.isFinite) && c.a.some((x) => x > 0));
-  const fit = (rows: typeof candidates) => {
-    const x = rows.map(() => 0),
-      res = b.map((v) => -v);
-    for (let round = 0; round < 40; round++) {
-      let change = 0;
-      for (let j = 0; j < rows.length; j++) {
-        const a = rows[j].a,
-          den = a.reduce((s, v) => s + v * v, 0);
-        const gradient = a.reduce((s, v, i) => s + v * res[i], 0);
-        const next = Math.max(0, Math.min(500, x[j] - gradient / den)),
-          delta = next - x[j];
-        for (let k = 0; k < 4; k++) res[k] += delta * a[k];
-        x[j] = next;
-        change += Math.abs(delta);
-      }
-      if (change < 1e-7) break;
-    }
-    return { x, score: res.reduce((s, v) => s + v * v, 0) };
-  };
-  const initial = b.reduce((s, v) => s + v * v, 0);
-  // Keep computation bounded while retaining the strongest candidate for each remaining nutrient.
-  const ranked = candidates
-    .map((c) => ({ c, score: fit([c]).score }))
-    .sort(
-      (a, b) => a.score - b.score || a.c.food.id.localeCompare(b.c.food.id),
-    );
-  const pool = ranked.slice(0, 24).map((r) => r.c);
+  if (deficit.every((v) => v === 0)) return [];
+  const scales = keys.map((k) => Math.max(Number(goals[k]), 1)),
+    b = deficit.map((v, i) => v / scales[i]);
+  const score = (a: number[]) =>
+    a.reduce((s, v, i) => {
+      const residual = v - b[i];
+      return s + residual * residual * (residual > 0 ? 2 : 1);
+    }, 0);
+  const initial = score([0, 0, 0, 0]);
+  const choices = foods
+    .flatMap((food) =>
+      observedServings(food.id, meals, date).map((portion) => ({
+        food,
+        ...portion,
+        a: keys.map(
+          (k, i) =>
+            (Number(nutrition(food)[k]) * portion.grams) / 100 / scales[i],
+        ),
+      })),
+    )
+    .filter((c) => c.a.every(Number.isFinite) && c.a.some((v) => v > 0));
+  // Select food candidates rather than dropping complementary small servings solely by gram fit.
+  const ranked = [...choices].sort((a, b) => score(a.a) - score(b.a));
+  const foodIds = new Set(ranked.slice(0, 45).map((c) => c.food.id));
   for (let k = 0; k < 4; k++) {
-    if (!target[k]) continue;
-    const specialist = [...candidates].sort(
+    if (!deficit[k]) continue;
+    const c = [...choices].sort(
       (a, b) => b.a[k] / Math.hypot(...b.a) - a.a[k] / Math.hypot(...a.a),
     )[0];
-    if (specialist && !pool.includes(specialist)) pool.push(specialist);
+    if (c) foodIds.add(c.food.id);
   }
-  let selected: typeof candidates = [],
-    best = initial;
-  for (let step = 0; step < 3; step++) {
-    let winner: (typeof candidates)[number] | undefined,
-      score = best;
-    for (const candidate of pool) {
-      if (selected.includes(candidate)) continue;
-      const attempt = fit([...selected, candidate]);
-      if (attempt.score < score - 1e-8) {
-        winner = candidate;
-        score = attempt.score;
+  const pool = choices.filter((c) => foodIds.has(c.food.id));
+  type Plan = { items: typeof pool; a: number[]; score: number };
+  let beam: Plan[] = [{ items: [], a: [0, 0, 0, 0], score: initial }],
+    best = beam[0];
+  for (let depth = 0; depth < 5; depth++) {
+    const expanded: Plan[] = [],
+      seen = new Set<string>();
+    for (const plan of beam)
+      for (const item of pool) {
+        if (plan.items.some((i) => i.food.id === item.food.id)) continue;
+        const items = [...plan.items, item];
+        const signature = items
+          .map((x) => `${x.food.id}:${x.grams}`)
+          .sort()
+          .join("|");
+        if (seen.has(signature)) continue;
+        seen.add(signature);
+        const a = plan.a.map((v, i) => v + item.a[i]),
+          next = { items, a, score: score(a) };
+        expanded.push(next);
+        if (next.score < best.score - 1e-9) best = next;
       }
-    }
-    if (!winner) break;
-    selected = [...selected, winner];
-    best = score;
+    beam = expanded
+      .sort((a, b) => a.score - b.score || a.items.length - b.items.length)
+      .slice(0, 40);
+    if (!beam.length) break;
   }
-  const quantities = fit(selected).x.map(Math.round);
-  const score = b.reduce(
-    (s, v, k) =>
-      s +
-      Math.pow(
-        selected.reduce((n, c, j) => n + c.a[k] * quantities[j], 0) - v,
-        2,
-      ),
-    0,
-  );
-  if (score >= initial - 1e-8) return [];
-  return selected
-    .map((c, i) => ({ food: c.food, grams: quantities[i] }))
-    .filter((x) => x.grams > 0);
+  return best.score < initial - 1e-8
+    ? best.items.map(({ food, grams, observations }) => ({
+        food,
+        grams,
+        observations,
+      }))
+    : [];
 }
 export function project(
   totals: Nutrients,
   suggestions: Suggestion[],
 ): Nutrients {
   const added = suggestions.map((x) => calculate(nutrition(x.food), x.grams));
-  // Retain decimal precision when summing snapshot and suggested values.
   return Object.fromEntries(
     keys.map((k) => [
       k,
@@ -104,4 +130,3 @@ export function project(
     ]),
   ) as Nutrients;
 }
-import Decimal from "decimal.js";

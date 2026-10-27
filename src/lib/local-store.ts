@@ -1,14 +1,16 @@
 import { applyMutation, initialData, validateData } from "./local-data";
+import { mergeData, type SyncConfig } from "./sync-model";
 import type { TrackerData } from "./types";
-const DB = "pfc-tracker-local-v1";
-const STORE = "tracker";
-const KEY = "data";
+const DB = "pfc-tracker-local-v1",
+  STORE = "tracker",
+  KEY = "data",
+  SYNC = "sync";
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === "undefined") {
       reject(
         new Error(
-          "このブラウザでは端末内保存を利用できません。通常モードのブラウザをお使いください。",
+          "このブラウザでは端末内保存を利用できません。通常モードをお使いください。",
         ),
       );
       return;
@@ -18,44 +20,58 @@ function open(): Promise<IDBDatabase> {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () =>
       reject(
-        new Error(
-          "端末内データを開けません。ブラウザの保存設定を確認してください。",
-        ),
+        new Error("端末内データを開けません。保存設定を確認してください。"),
       );
     request.onblocked = () =>
       reject(new Error("別のタブを閉じて再読み込みしてください。"));
   });
 }
-/** Serialized IDB read/write transaction prevents lost updates across browser tabs. */
-async function transact(
-  change?: (data: TrackerData) => TrackerData,
+type State = { data: TrackerData; config: SyncConfig | null };
+async function transaction<T>(
+  change: (state: State) => {
+    result: T;
+    data?: TrackerData;
+    config?: SyncConfig | null;
+  },
   replace = false,
-): Promise<TrackerData> {
+): Promise<T> {
   const db = await open();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite"),
-      store = tx.objectStore(STORE);
-    let result: TrackerData;
-    let failure: unknown;
-    const request = store.get(KEY);
-    request.onsuccess = () => {
+      store = tx.objectStore(STORE),
+      a = store.get(KEY),
+      b = store.get(SYNC);
+    let count = 0,
+      result: T,
+      failure: unknown;
+    const apply = () => {
+      if (++count < 2) return;
       try {
-        const old =
-          replace || request.result === undefined
-            ? initialData()
-            : validateData(request.result);
-        result = change ? change(old) : old;
-        if (change || request.result === undefined) store.put(result, KEY);
+        const data =
+            replace || a.result === undefined
+              ? initialData()
+              : validateData(a.result),
+          config = (b.result || null) as SyncConfig | null;
+        const next = change({ data, config });
+        result = next.result;
+        if (next.data !== undefined || a.result === undefined)
+          store.put(next.data ?? data, KEY);
+        if (next.config !== undefined) {
+          if (next.config === null) store.delete(SYNC);
+          else store.put(next.config, SYNC);
+        }
       } catch (e) {
         failure =
           e instanceof DOMException
             ? new Error(
-                "端末に保存できませんでした。空き容量・ブラウザの保存設定を確認してください。",
+                "端末に保存できませんでした。空き容量・保存設定を確認してください。",
               )
             : e;
         tx.abort();
       }
     };
+    a.onsuccess = apply;
+    b.onsuccess = apply;
     tx.oncomplete = () => {
       db.close();
       resolve(result);
@@ -65,14 +81,67 @@ async function transact(
       reject(
         failure ||
           new Error(
-            "端末に保存できませんでした。空き容量・ブラウザの保存設定を確認してください。",
+            "端末に保存できませんでした。空き容量・保存設定を確認してください。",
           ),
       );
     };
   });
 }
-export const loadLocal = () => transact();
-export const mutateLocal = (action: string, payload: unknown) =>
-  transact((data) => applyMutation(data, action, payload));
-export const replaceLocal = (data: TrackerData) =>
-  transact(() => validateData(data), true);
+function announce(localEdit: boolean) {
+  if (typeof window === "undefined") return;
+  if (localEdit) window.dispatchEvent(new Event("pfc-local-change"));
+  if (typeof BroadcastChannel !== "undefined") {
+    const c = new BroadcastChannel("pfc-local-updates");
+    c.postMessage("saved");
+    c.close();
+  }
+}
+export const loadLocal = () => transaction(({ data }) => ({ result: data }));
+export async function mutateLocal(action: string, payload: unknown) {
+  const result = await transaction(({ data }) => {
+    const next = applyMutation(data, action, payload);
+    return { data: next, result: next };
+  });
+  announce(true);
+  return result;
+}
+export async function replaceLocal(data: TrackerData) {
+  const next = validateData(data);
+  const result = await transaction(() => ({ data: next, result: next }), true);
+  announce(true);
+  return result;
+}
+export const readSyncState = () => transaction((state) => ({ result: state }));
+export async function configureSync(
+  config: SyncConfig,
+  captured: TrackerData,
+  nextData: TrackerData,
+) {
+  await transaction(({ data }) => ({
+    data: mergeData(captured, data, nextData),
+    config,
+    result: undefined,
+  }));
+  announce(false);
+}
+export async function acknowledgeSync(
+  code: string,
+  captured: TrackerData,
+  cloud: TrackerData,
+  revision: number,
+) {
+  await transaction(({ data, config }) => {
+    if (config?.code !== code || config.revision > revision)
+      return { result: undefined };
+    return {
+      data: mergeData(captured, data, cloud),
+      config: { ...config, base: cloud, revision },
+      result: undefined,
+    };
+  });
+  announce(false);
+}
+export async function disconnectSync() {
+  await transaction(() => ({ config: null, result: undefined }));
+  announce(false);
+}

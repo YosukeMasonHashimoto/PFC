@@ -1,13 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { recommend, project } from "../src/lib/recommend";
+import { recommend, project, observedServings } from "../src/lib/recommend";
 import { initialData, applyMutation } from "../src/lib/local-data";
-function foods() {
+function fixture() {
   let d = initialData();
-  for (const [name, protein, fat, carbs, kcal] of [
-    ["架空P食品", 20, 0, 0, 80],
-    ["架空F食品", 0, 10, 0, 90],
-    ["架空C食品", 0, 0, 25, 100],
-  ] as const)
+  for (const [name, protein, fat, carbs, kcal, grams] of [
+    ["スーパー大麦", 10, 2, 65, 320, 20],
+    ["たまご", 12, 10, 1, 150, 50],
+    ["架空P食品", 20, 0, 0, 80, 100],
+    ["架空C食品", 0, 0, 25, 100, 100],
+  ] as const) {
     d = applyMutation(d, "food", {
       name,
       protein,
@@ -21,78 +22,115 @@ function foods() {
       energy_basis: "test",
       portions: [],
     });
-  return d.foods;
+    d = applyMutation(d, "meal", {
+      food_id: d.foods.at(-1)!.id,
+      amount_g: grams,
+      meal_type: "breakfast",
+      consumed_at: "2026-10-25T00:00:00Z",
+    });
+  }
+  return d;
 }
 const zero = { protein: 0, fat: 0, carbs: 0, kcal: 0 };
-describe("calculated food suggestions", () => {
-  it("finds gram quantities for complementary registered foods", () => {
-    const f = foods();
-    const goal = { protein: 40, fat: 10, carbs: 50, kcal: 450 };
-    const s = recommend(f, zero, goal);
-    expect(s.length).toBeGreaterThan(0);
-    expect(s.length).toBeLessThanOrEqual(3);
-    const n = project(zero, s);
-    expect(Number(n.protein)).toBeCloseTo(40, 0);
-    expect(Number(n.fat)).toBeCloseTo(10, 0);
-    expect(Number(n.carbs)).toBeCloseTo(50, 0);
-    expect(Number(n.kcal)).toBeCloseTo(450, 0);
-  });
-  it("does not suggest more food when targets are reached or exceeded", () => {
-    expect(
-      recommend(
-        foods(),
-        { protein: 100, fat: 100, carbs: 100, kcal: 1000 },
-        { protein: 10, fat: 10, carbs: 10, kcal: 100 },
-      ),
-    ).toEqual([]);
-    expect(recommend(foods(), zero, zero)).toEqual([]);
-  });
-  it("handles no foods and zero-nutrition foods without division by zero", () => {
-    expect(
-      recommend([], zero, { protein: 10, fat: 0, carbs: 0, kcal: 40 }),
-    ).toEqual([]);
-    const f = foods()[0];
-    expect(
-      recommend(
-        [{ ...f, protein_100g: 0, fat_100g: 0, carbs_100g: 0, kcal_100g: 0 }],
-        zero,
-        { protein: 10, fat: 0, carbs: 0, kcal: 40 },
-      ),
-    ).toEqual([]);
-  });
-  it("recalculates after a recorded meal and keeps displayed quantities bounded", () => {
-    const f = foods(),
-      g = { protein: 40, fat: 10, carbs: 50, kcal: 450 };
-    const before = recommend(f, zero, g);
-    const after = recommend(f, { protein: 20, fat: 0, carbs: 0, kcal: 80 }, g);
-    expect(after.find((s) => s.food.id === f[0].id)?.grams).toBeLessThan(
-      before.find((s) => s.food.id === f[0].id)!.grams,
+describe("realistic serving suggestions", () => {
+  it("uses only actually recorded amounts, never optimized 204g or 201g quantities", () => {
+    const d = fixture();
+    const s = recommend(
+      d.foods,
+      zero,
+      { protein: 100, fat: 50, carbs: 250, kcal: 2000 },
+      d.meals,
+      "2026-10-26",
     );
+    expect(s.length).toBeGreaterThan(1);
+    expect(s.find((x) => x.food.name === "スーパー大麦")?.grams).toBe(20);
+    expect(s.find((x) => x.food.name === "たまご")?.grams).toBe(50);
     expect(
-      after.every(
-        (s) => Number.isInteger(s.grams) && s.grams > 0 && s.grams <= 500,
+      s.every((x) =>
+        d.meals.some(
+          (m) => m.food_id === x.food.id && Number(m.amount_g) === x.grams,
+        ),
       ),
     ).toBe(true);
   });
-  it("keeps zero goals and published calories independent", () => {
-    const f = foods()[0];
-    const s = recommend([f], zero, {
-      protein: 40,
-      fat: 0,
-      carbs: 0,
-      kcal: 100,
-    });
-    const n = project(zero, s);
-    expect(Number(n.kcal)).toBe(Number(n.protein) * 4);
-    expect(s.length).toBe(1);
-    expect(Number(n.protein)).not.toBe(40);
+  it("does not suggest untried foods or multiply a serving to fill deficits", () => {
+    const d = fixture();
+    expect(
+      recommend(
+        d.foods,
+        zero,
+        { protein: 100, fat: 50, carbs: 250, kcal: 2000 },
+        [],
+      ),
+    ).toEqual([]);
+    const s = recommend(
+      [d.foods[1]],
+      zero,
+      { protein: 100, fat: 50, carbs: 250, kcal: 2000 },
+      d.meals,
+    );
+    expect(s).toHaveLength(1);
+    expect(s[0].grams).toBe(50);
   });
-  it("does not mutate food masters or totals", () => {
-    const f = foods(),
-      copy = structuredClone(f),
-      total = { ...zero };
-    recommend(f, total, { protein: 10, fat: 10, carbs: 10, kcal: 200 });
-    expect(f).toEqual(copy);
-    expect(total).toEqual(zero);
+  it("prefers common observed servings, keeps separate snacks separate and excludes future meals", () => {
+    let d = fixture();
+    const id = d.foods[1].id;
+    for (const [amount_g, consumed_at] of [
+      [50, "2026-10-25T02:00:00Z"],
+      [100, "2026-10-25T03:00:00Z"],
+      [201, "2027-01-01T03:00:00Z"],
+    ] as const)
+      d = applyMutation(d, "meal", {
+        food_id: id,
+        amount_g,
+        consumed_at,
+        meal_type: "snack",
+      });
+    expect(observedServings(id, d.meals, "2026-10-26")).toEqual([
+      { grams: 50, observations: 2 },
+      { grams: 100, observations: 1 },
+    ]);
+  });
+  it("combines complementary items and never selects one food twice", () => {
+    const d = fixture(),
+      g = { protein: 30, fat: 5, carbs: 40, kcal: 340 },
+      s = recommend(d.foods, zero, g, d.meals);
+    expect(s.length).toBeGreaterThan(1);
+    expect(new Set(s.map((x) => x.food.id)).size).toBe(s.length);
+    expect(Number(project(zero, s).kcal)).toBeGreaterThan(0);
+  });
+  it("handles zero goals, reached goals, empty and zero-nutrient foods", () => {
+    const d = fixture();
+    expect(recommend(d.foods, zero, zero, d.meals)).toEqual([]);
+    expect(
+      recommend([], zero, { protein: 10, fat: 0, carbs: 0, kcal: 40 }, []),
+    ).toEqual([]);
+    const f = {
+      ...d.foods[0],
+      protein_100g: 0,
+      fat_100g: 0,
+      carbs_100g: 0,
+      kcal_100g: 0,
+    };
+    expect(
+      recommend(
+        [f],
+        zero,
+        { protein: 10, fat: 0, carbs: 0, kcal: 40 },
+        d.meals,
+      ),
+    ).toEqual([]);
+  });
+  it("preserves published energy and never changes history or food masters", () => {
+    const d = fixture(),
+      copy = structuredClone(d),
+      s = recommend(
+        [d.foods[1]],
+        zero,
+        { protein: 20, fat: 10, carbs: 5, kcal: 150 },
+        d.meals,
+      );
+    expect(Number(project(zero, s).kcal)).toBe(75);
+    expect(d).toEqual(copy);
   });
 });

@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "npm run build && playwright test",
+    "test:e2e": "node scripts/test-e2e.mjs",
     "format": "prettier --write src tests *.ts *.mjs *.json"
   },
   "repository": {
@@ -25,6 +25,7 @@
   "homepage": "https://github.com/YosukeMasonHashimoto/PFC#readme",
   "dependencies": {
     "@radix-ui/react-slot": "^1.5.0",
+    "@supabase/supabase-js": "^2.118.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "decimal.js": "^10.6.0",

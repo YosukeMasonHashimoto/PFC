@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import { recommend, project } from "@/lib/recommend";
 import { keys, type Nutrients } from "@/lib/nutrition";
-import type { Food } from "@/lib/types";
+import type { Meal, Food } from "@/lib/types";
 import { Button } from "./ui/button";
 import { AppLink } from "./pwa";
 const labels = { protein: "P", fat: "F", carbs: "C", kcal: "カロリー" };
@@ -28,12 +28,14 @@ function Remaining({
 export function NutritionGuide({
   date,
   foods,
+  meals,
   totals,
   goals,
   onRecord,
 }: {
   date: string;
   foods: Food[];
+  meals: Meal[];
   totals: Nutrients;
   goals: Nutrients;
   onRecord: (food: Food, grams: number) => void;
@@ -46,8 +48,10 @@ export function NutritionGuide({
         foods,
         { protein: p, fat: fats, carbs: c, kcal: k },
         { protein: gp, fat: gf, carbs: gc, kcal: gk },
+        meals,
+        date,
       ),
-    [foods, p, fats, c, k, gp, gf, gc, gk],
+    [foods, meals, date, p, fats, c, k, gp, gf, gc, gk],
   );
   const reached = keys.every(
     (key) => Number(totals[key]) >= Number(goals[key]),
@@ -79,7 +83,8 @@ export function NutritionGuide({
             {suggestions.map((x) => (
               <div key={x.food.id}>
                 <span>
-                  <strong>{x.food.name}</strong> を約 <b>{x.grams}g</b>
+                  <strong>{x.food.name}</strong> を <b>{x.grams}g</b>
+                  （記録した1食分）
                 </span>
                 <Button
                   size="default"
@@ -105,13 +110,13 @@ export function NutritionGuide({
             </div>
           </details>
           <small>
-            登録した栄養値による計算上の目安です。すべての目標が一致するとは限りません。記録すると候補を再計算します。
+            過去に記録した1食分だけを組み合わせた目安です。残量は無理に1品の量を増やして埋めません。候補後にも不足・超過が残る場合があります。
           </small>
         </>
       ) : (
         <p className="muted">
           {foods.length
-            ? "登録食品では、目標に近づく分量を見つけられませんでした。"
+            ? "食事の実績がある食品から、目標に近づく組み合わせを見つけられませんでした。まず普段食べる分量を記録してください。"
             : "食品を登録すると、あと何を何g食べるかの目安が表示されます。"}{" "}
           <AppLink href="/foods">食品を登録する</AppLink>
         </p>
