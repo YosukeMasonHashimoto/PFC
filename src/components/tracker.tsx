@@ -34,6 +34,7 @@ import {
   type Nutrients,
 } from "@/lib/nutrition";
 import type { Food, Meal, TrackerData, Template } from "@/lib/types";
+import { NutritionGuide } from "@/components/nutrition-guide";
 import { BackupControls } from "@/components/backup-controls";
 import { loadLocal, mutateLocal } from "@/lib/local-store";
 const labels = {
@@ -70,7 +71,13 @@ const mealN = (x: Meal): Nutrients => ({
 });
 type Editor =
   | { type: "food"; food?: Food }
-  | { type: "meal"; food?: Food; meal?: Meal; mealType?: string }
+  | {
+      type: "meal";
+      food?: Food;
+      meal?: Meal;
+      mealType?: string;
+      amount?: number;
+    }
   | { type: "template" }
   | { type: "apply"; template: Template };
 export default function Tracker() {
@@ -288,6 +295,17 @@ export default function Tracker() {
               <Check size={18} />
               {notice}
             </div>
+          )}
+          {data && (
+            <NutritionGuide
+              date={date}
+              foods={data.foods}
+              totals={totals}
+              goals={goals}
+              onRecord={(food, amount) =>
+                setEditor({ type: "meal", food, amount })
+              }
+            />
           )}
           {!data && error && (
             <div className="card">
@@ -605,7 +623,7 @@ export default function Tracker() {
                     <Search size={20} />
                     <input
                       aria-label="食品を検索"
-                      placeholder="食品名・ブランドで検索"
+                      placeholder="食品名で検索"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                     />
@@ -663,9 +681,7 @@ export default function Tracker() {
                           </Button>
                         </div>
                         <h3>{food.name}</h3>
-                        <p className="muted">
-                          {food.brand || "ブランド未設定"}
-                        </p>
+                        <p className="muted">{food.brand || ""}</p>
                         <strong className="food-energy">
                           {f(food.kcal_100g)} <small>kcal / 100g</small>
                         </strong>
@@ -909,22 +925,18 @@ function EditorDialog({
   const [foodId, setFoodId] = useState(
     editor.type === "meal" ? editor.food?.id || existing?.food_id || "" : "",
   );
-  const [amount, setAmount] = useState(String(existing?.amount_g || 100));
+  const [amount, setAmount] = useState(
+    String(
+      existing?.amount_g ||
+        (editor.type === "meal" ? editor.amount : undefined) ||
+        100,
+    ),
+  );
   const [unit, setUnit] = useState("g");
   const [items, setItems] = useState<{ food_id: string; amount_g: number }[]>(
     [],
   );
   const [localError, setLocalError] = useState("");
-  const [portionRows, setPortionRows] = useState<
-    { label: string; grams: string }[]
-  >(
-    editor.type === "food"
-      ? editor.food?.portions.map((p) => ({
-          label: p.label,
-          grams: String(p.grams),
-        })) || []
-      : [],
-  );
   const food = data.foods.find((x) => x.id === foodId);
   const portion = food?.portions.find((p) => p.id === unit);
   let grams = Number(amount);
@@ -965,10 +977,15 @@ function EditorDialog({
         onSave("food", {
           ...obj,
           id: editor.food?.id,
-          portions: portionRows.map((p) => ({
-            label: p.label,
-            grams: Number(p.grams),
-          })),
+          brand: editor.food?.brand || "",
+          source_type: editor.food?.source_type || "manual",
+          source_version: editor.food?.source_version || "",
+          energy_basis: editor.food?.energy_basis || "ユーザー入力",
+          portions:
+            editor.food?.portions.map((p) => ({
+              label: p.label,
+              grams: p.grams,
+            })) || [],
         });
       if (editor.type === "meal") {
         if (!Number.isFinite(grams) || grams <= 0 || grams > 100000)
@@ -1055,31 +1072,10 @@ function EditorDialog({
               <small>
                 生・加熱後、皮あり・なし、炊飯前・後は別食品として登録。
               </small>
-              <label>
-                ブランド / メーカー
-                <input
-                  name="brand"
-                  maxLength={150}
-                  defaultValue={editor.food?.brand}
-                />
-              </label>
               <h3>100gあたりの栄養成分</h3>
               <NutrientFields
                 values={editor.food ? foodN(editor.food) : undefined}
               />
-              <label>
-                出典の種類
-                <select
-                  name="source_type"
-                  defaultValue={editor.food?.source_type || "manual"}
-                >
-                  {Object.entries(sources).map(([key, name]) => (
-                    <option key={key} value={key}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label>
                 出典 URL / 食品コード / 商品表示の情報
                 <input
@@ -1088,87 +1084,6 @@ function EditorDialog({
                   defaultValue={editor.food?.source_ref}
                 />
               </label>
-              <label>
-                版・確認日
-                <input
-                  name="source_version"
-                  maxLength={150}
-                  defaultValue={editor.food?.source_version}
-                  placeholder="例：2026-10-26 商品ラベル確認"
-                />
-              </label>
-              <label>
-                エネルギー値の根拠
-                <input
-                  name="energy_basis"
-                  maxLength={150}
-                  required
-                  defaultValue={
-                    editor.food?.energy_basis || "栄養成分表示の公表値"
-                  }
-                />
-              </label>
-              <h3>ポーション換算（任意）</h3>
-              <p className="muted">この食品に固有の重量を登録します。</p>
-              {portionRows.map((p, i) => (
-                <div className="portion-row" key={i}>
-                  <label>
-                    単位名
-                    <input
-                      required
-                      value={p.label}
-                      maxLength={50}
-                      placeholder="1パック"
-                      onChange={(e) =>
-                        setPortionRows((rows) =>
-                          rows.map((r, j) =>
-                            i === j ? { ...r, label: e.target.value } : r,
-                          ),
-                        )
-                      }
-                    />
-                  </label>
-                  <label>
-                    重量 (g)
-                    <input
-                      type="number"
-                      required
-                      min="0.001"
-                      max="100000"
-                      step="any"
-                      value={p.grams}
-                      onChange={(e) =>
-                        setPortionRows((rows) =>
-                          rows.map((r, j) =>
-                            i === j ? { ...r, grams: e.target.value } : r,
-                          ),
-                        )
-                      }
-                    />
-                  </label>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`ポーション${i + 1}を削除`}
-                    onClick={() =>
-                      setPortionRows((rows) => rows.filter((_, j) => j !== i))
-                    }
-                  >
-                    <X size={16} />
-                  </Button>
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={portionRows.length >= 20}
-                onClick={() =>
-                  setPortionRows((rows) => [...rows, { label: "", grams: "" }])
-                }
-              >
-                ポーションを追加
-              </Button>
             </>
           )}
           {editor.type === "meal" && (
@@ -1229,9 +1144,7 @@ function EditorDialog({
                 </label>
               </div>
               {!food?.portions.length && (
-                <small>
-                  ポーション未登録のため、グラムで入力してください。
-                </small>
+                <small>摂取量をグラムで入力してください。</small>
               )}
               {preview && (
                 <div className="nutrition-preview">

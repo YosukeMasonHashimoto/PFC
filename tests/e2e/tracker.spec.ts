@@ -30,11 +30,7 @@ test("login-free mobile UI: local persistence, food, pack, snapshots, history an
   await dialog.getByLabel("脂質 (g)", { exact: true }).fill("5");
   await dialog.getByLabel("炭水化物 (g)", { exact: true }).fill("20");
   await dialog.getByLabel("カロリー (kcal)", { exact: true }).fill("170");
-  await dialog.getByLabel("出典の種類").selectOption("estimated");
   await dialog.getByLabel("出典 URL").fill("架空のE2Eテスト値。本番使用不可");
-  await dialog.getByRole("button", { name: "ポーションを追加" }).click();
-  await dialog.getByLabel("単位名").fill("1パック");
-  await dialog.getByLabel("重量 (g)", { exact: true }).fill("150");
   await dialog.getByRole("button", { name: "保存する" }).click();
   await expect(dialog).not.toBeVisible();
   await page
@@ -44,10 +40,7 @@ test("login-free mobile UI: local persistence, food, pack, snapshots, history an
     "このブラウザに保存しました",
   );
   await page.getByRole("button", { name: "記録", exact: true }).click();
-  await dialog
-    .getByLabel("単位", { exact: true })
-    .selectOption({ label: "1パック (150g)" });
-  await dialog.getByLabel("分量").fill("1");
+  await dialog.getByLabel("分量").fill("150");
   await expect(dialog.locator(".nutrition-preview")).toContainText("255 kcal");
   await dialog.getByLabel("記録日時（日本時間）").fill("2026-10-26T00:00");
   await dialog.getByLabel("食事区分").selectOption("breakfast");
@@ -351,4 +344,54 @@ test("failed persistent writes never report success or replace previous data", a
   await expect(
     page.getByRole("heading", { name: "保持する架空食品" }),
   ).toBeVisible();
+});
+
+test("simplified food form and persistent live meal suggestions", async ({
+  page,
+}) => {
+  await page.goto("/foods");
+  await page
+    .getByRole("button", { name: "食品を登録", exact: true })
+    .first()
+    .click();
+  const d = page.getByRole("dialog");
+  for (const label of [
+    "ブランド / メーカー",
+    "出典の種類",
+    "版・確認日",
+    "エネルギー値の根拠",
+    "ポーション換算",
+  ])
+    await expect(d.getByText(label, { exact: false })).toHaveCount(0);
+  await d.getByLabel("食品名", { exact: true }).fill("目安用架空食品");
+  for (const [label, value] of [
+    ["たんぱく質 (g)", "20"],
+    ["脂質 (g)", "10"],
+    ["炭水化物 (g)", "50"],
+    ["カロリー (kcal)", "370"],
+  ])
+    await d.getByLabel(label, { exact: true }).fill(value);
+  await d.getByRole("button", { name: "保存する" }).click();
+  await expect(d).not.toBeVisible();
+  const guide = page.getByRole("region", { name: "目標までの食事目安" });
+  await expect(guide).toContainText("目安用架空食品");
+  const before = await guide.locator(".remaining-chips").first().innerText();
+  await guide.getByRole("button", { name: "この分量で記録" }).click();
+  const grams = Number(await d.getByLabel("分量").inputValue());
+  expect(grams).toBeGreaterThan(0);
+  expect(grams).toBeLessThanOrEqual(500);
+  await d.getByRole("button", { name: "保存する" }).click();
+  await expect(d).not.toBeVisible();
+  await expect(guide.locator(".remaining-chips").first()).not.toHaveText(
+    before,
+  );
+  await page
+    .locator(".bottom-nav")
+    .getByRole("link", { name: "ホーム", exact: true })
+    .click();
+  await expect(guide).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 700));
+  expect(
+    await guide.evaluate((el) => el.getBoundingClientRect().top),
+  ).toBeLessThan(60);
 });
