@@ -25,12 +25,15 @@ const publicFiles = [
 const digest = createHash("sha256");
 digest.update(await readFile(".next/BUILD_ID"));
 for (const file of assets) digest.update(await readFile(file));
-for (const file of ["index", "foods", "history", "settings"])
-  digest.update(await readFile(`.next/server/app/${file}.html`));
+// BUILD_ID identifies the rendered shell for this build. Next.js/Vercel may
+// relocate HTML into route-cache; never depend on private server output paths.
 for (const file of publicFiles.filter(
   (file) => file !== "/manifest.webmanifest",
 ))
   digest.update(await readFile(`public${file}`));
+const template = await readFile("scripts/sw-template.js", "utf8");
+digest.update(template);
+digest.update(JSON.stringify({ pages, publicFiles }));
 const config = {
   version: digest.digest("hex").slice(0, 16),
   pages,
@@ -40,7 +43,6 @@ const config = {
     ...assets.map((file) => file.replace(".next/static/", "/_next/static/")),
   ],
 };
-const template = await readFile("scripts/sw-template.js", "utf8");
 await writeFile(
   "public/sw.js",
   template.replace('"__PFC_PRECACHE__"', JSON.stringify(config)),
